@@ -16,8 +16,8 @@ private final class SetupPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 }
 
-/// Floats a newly created fence above app windows with a card for its name, theme, color,
-/// transparency and icons per row. Finishing settles the fence back to desktop level.
+/// Floats a newly created fence above app windows with a card for its settings (see
+/// `FenceSettingsForm`). Finishing settles the fence back to desktop level.
 @MainActor
 final class FenceSetupController {
     let fenceID: UUID
@@ -93,15 +93,12 @@ private struct FenceSetupCard: View {
     let onHeight: (CGFloat) -> Void
 
     @EnvironmentObject private var store: FenceStore
-    @EnvironmentObject private var coordinator: FenceCoordinator
-    @ObservedObject private var themes = ThemeSettings.shared
-    @State private var name = ""
-    @FocusState private var nameFocused: Bool
+    @State private var showsMore = false
 
     var body: some View {
         VStack(spacing: 0) {
-            if let fence = store.fence(fenceID) {
-                content(fence)
+            if store.fence(fenceID) != nil {
+                content
                     .fixedSize(horizontal: false, vertical: true)
                     .background(GeometryReader { geo in
                         Color.clear.preference(key: CardHeightKey.self, value: geo.size.height)
@@ -112,151 +109,36 @@ private struct FenceSetupCard: View {
         .onPreferenceChange(CardHeightKey.self) { onHeight($0) }
     }
 
-    private func content(_ fence: Fence) -> some View {
+    private var content: some View {
         VStack(alignment: .leading, spacing: 12) {
-            TextField("Fence name", text: $name)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 8)
-                .frame(height: 28)
-                .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.1)))
-                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.accentColor.opacity(nameFocused ? 0.8 : 0), lineWidth: 1.5))
-                .focused($nameFocused)
-                .onSubmit(onDone)
-                .onChange(of: name) { _, newName in coordinator.rename(fenceID, to: newName) }
-
-            section(fence.theme.map { "Theme \u{00B7} \($0.name)" } ?? "Theme \u{00B7} Global (\(themes.globalTheme.name))") {
-                LazyVGrid(columns: Array(repeating: GridItem(.fixed(36), spacing: 2), count: 7), alignment: .leading, spacing: 4) {
-                    ThemeSwatch(
-                        style: ThemeStyle.of(themes.globalTheme, for: fence),
-                        selected: fence.theme == nil,
-                        badge: "globe"
-                    ) { coordinator.setTheme(fenceID, nil) }
-                        .help("Use Global (\(themes.globalTheme.name))")
-                    ForEach(FenceTheme.allCases) { theme in
-                        ThemeSwatch(style: ThemeStyle.of(theme, for: fence), selected: fence.theme == theme) {
-                            coordinator.setTheme(fenceID, theme)
-                        }
-                            .help(theme.name)
-                    }
-                }
-            }
-
-            // Other themes set their own colors and transparency.
-            if (fence.theme ?? themes.globalTheme) == .classic {
-                section("Color") {
-                    HStack(spacing: 8) {
-                        ForEach(FenceColor.allCases) { color in
-                            Button { coordinator.setColor(fenceID, color) } label: {
-                                Circle()
-                                    .fill(Color(nsColor: color.body))
-                                    .frame(width: 22, height: 22)
-                                    .overlay(Circle().strokeBorder(Color.white.opacity(color == fence.color ? 0.95 : 0.15), lineWidth: color == fence.color ? 2 : 1))
-                                    .contentShape(Circle())
-                            }
-                            .buttonStyle(.plain)
-                            .help(color.name)
-                        }
-                    }
-                }
-
-                section("Transparency") {
-                    let current = OpacityPreset.nearest(to: fence.opacity)
-                    HStack(spacing: 5) {
-                        ForEach(OpacityPreset.allCases) { preset in
-                            Chip(title: preset.name, selected: preset == current) {
-                                coordinator.setOpacity(fenceID, preset.value)
-                            }
-                        }
-                    }
-                }
-            }
-
-            section("Icons per row") {
-                HStack(spacing: 5) {
-                    ForEach(Array(AppSettings.iconsPerRowRange), id: \.self) { count in
-                        Chip(title: "\(count)", selected: count == fence.iconsPerRow) {
-                            coordinator.setIconsPerRow(fenceID, count)
-                        }
-                    }
-                }
-            }
+            FenceSettingsForm(fenceID: fenceID, showsMore: showsMore, focusesName: true, onSubmit: onDone)
 
             HStack {
-                Text("Change these anytime from the \u{22EF} menu.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.white.opacity(0.45))
+                Button {
+                    showsMore.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: showsMore ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 8, weight: .bold))
+                        Text(showsMore ? "Fewer Options" : "More Options")
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
                 Spacer()
                 Button("Done", action: onDone)
                     .keyboardShortcut(.defaultAction)
                     .controlSize(.small)
             }
+            Text("Later, point at the fence and click its gear to change these.")
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.45))
         }
         .padding(14)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color(white: 0.13)))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.white.opacity(0.12)))
         .onExitCommand(perform: onDone)
-        .onAppear {
-            name = fence.title
-            DispatchQueue.main.async { nameFocused = true }
-        }
-    }
-
-    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.6))
-            content()
-        }
-    }
-}
-
-private struct ThemeSwatch: View {
-    let style: ThemeStyle
-    let selected: Bool
-    var badge: String?
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            ThemePreview(style: style)
-                .frame(width: 32, height: 24)
-                .overlay(alignment: .bottomLeading) {
-                    if let badge {
-                        Image(systemName: badge)
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(.white)
-                            .padding(2)
-                            .background(Circle().fill(Color.black.opacity(0.6)))
-                            .offset(x: -3, y: 3)
-                    }
-                }
-                .padding(2)
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 2))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct Chip: View {
-    let title: String
-    let selected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(selected ? .white : .white.opacity(0.75))
-                .frame(minWidth: 22)
-                .padding(.horizontal, 6)
-                .frame(height: 22)
-                .background(Capsule().fill(selected ? Color.accentColor : Color.white.opacity(0.1)))
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
     }
 }

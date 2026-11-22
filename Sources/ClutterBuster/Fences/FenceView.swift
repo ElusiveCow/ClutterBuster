@@ -19,6 +19,8 @@ struct FenceView: View {
     @State private var hovered = false
     @State private var badge: String?
     @State private var badgeHide: DispatchWorkItem?
+    @State private var gearAnchor = PopoverAnchor()
+    @State private var menuAnchor = PopoverAnchor()
 
     private let corner: CGFloat = 12
 
@@ -66,6 +68,12 @@ struct FenceView: View {
                     gripColor: style.bodySecondary
                 )
             }
+            // Above the resize handles so the pill takes its clicks while it shows.
+            .overlay(alignment: .bottomLeading) {
+                if !fence.isCollapsed {
+                    hoverControls(fence, style: style)
+                }
+            }
             .overlay {
                 if let badge {
                     Text(badge)
@@ -88,6 +96,45 @@ struct FenceView: View {
                 return true
             } isTargeted: { isDropTargeted = $0 }
         }
+    }
+
+    /// Text size and settings buttons that fade in along the bottom left while the pointer is
+    /// over the fence, clear of the corner art and resize grip at the bottom right. Collapsed
+    /// fences don't show them; their ⋯ menu has the same choices.
+    private func hoverControls(_ fence: Fence, style: ThemeStyle) -> some View {
+        let visible = hovered || coordinator.settingsFenceID == fenceID
+        return HStack(spacing: 0) {
+            pillButton("textformat.size.smaller", help: "Smaller text", style: style) {
+                coordinator.adjustTextScale(fenceID, by: -1)
+            }
+            .disabled(fence.textScale <= Fence.textScaleRange.lowerBound)
+            pillButton("textformat.size.larger", help: "Bigger text", style: style) {
+                coordinator.adjustTextScale(fenceID, by: 1)
+            }
+            .disabled(fence.textScale >= Fence.textScaleRange.upperBound)
+            Rectangle()
+                .fill(style.titleText.opacity(0.2))
+                .frame(width: 1, height: 14)
+                .padding(.horizontal, 2)
+            pillButton("gearshape", help: "Fence settings", style: style) {
+                coordinator.showSettings(fenceID, from: gearAnchor.view)
+            }
+            .background(PopoverAnchorView(anchor: gearAnchor))
+        }
+        .padding(.horizontal, 3)
+        .frame(height: 26)
+        .background(ThemeFillView(fill: style.titleBar).opacity(0.92).clipShape(Capsule()))
+        .overlay(Capsule().strokeBorder(style.titleText.opacity(0.14)))
+        .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+        .padding(8)
+        .opacity(visible ? 1 : 0)
+        .animation(.easeOut(duration: 0.15), value: visible)
+        .allowsHitTesting(visible)
+    }
+
+    private func pillButton(_ systemImage: String, help: String, style: ThemeStyle, action: @escaping () -> Void) -> some View {
+        PillButton(systemImage: systemImage, color: style.titleText, action: action)
+            .help(help)
     }
 
     /// Briefly shows a value, such as the new text size, over the middle of the fence.
@@ -164,13 +211,22 @@ struct FenceView: View {
         }
         .gesture(moveGesture)
         .simultaneousGesture(TapGesture(count: 2).onEnded { startRename(fence) })
-        .contextMenu { FenceMenu(fence: fence, onRename: { startRename(fence) }, onNewTab: addTab) }
+        .contextMenu { fenceMenu(fence) }
+    }
+
+    private func fenceMenu(_ fence: Fence) -> some View {
+        FenceMenu(
+            fence: fence,
+            onRename: { startRename(fence) },
+            onNewTab: addTab,
+            onSettings: { coordinator.showSettings(fenceID, from: menuAnchor.view, edge: .maxY) }
+        )
     }
 
     private func titleButtons(_ fence: Fence, style: ThemeStyle) -> some View {
         HStack {
             Menu {
-                FenceMenu(fence: fence, onRename: { startRename(fence) }, onNewTab: addTab)
+                fenceMenu(fence)
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 12, weight: .bold))
@@ -182,6 +238,7 @@ struct FenceView: View {
             .buttonStyle(.plain)
             .menuIndicator(.hidden)
             .fixedSize()
+            .background(PopoverAnchorView(anchor: menuAnchor))
             .help("Fence options")
             Spacer()
             Button {
@@ -455,6 +512,7 @@ struct FenceMenu: View {
     let fence: Fence
     let onRename: () -> Void
     let onNewTab: () -> Void
+    let onSettings: () -> Void
 
     @EnvironmentObject private var coordinator: FenceCoordinator
     @ObservedObject private var themes = ThemeSettings.shared
@@ -462,6 +520,8 @@ struct FenceMenu: View {
     var body: some View {
         // Color and transparency belong to Classic; other themes set their own.
         let isClassic = (fence.theme ?? themes.globalTheme) == .classic
+        Button("Fence Settings…", action: onSettings)
+        Divider()
         Button("Rename…", action: onRename)
         Button("New Tab", action: onNewTab)
         Menu("Sort \u{201C}\(fence.currentTab.name)\u{201D}") {
@@ -634,6 +694,29 @@ private struct TabStripGrip: View {
                         }
                     }
             )
+    }
+}
+
+/// An icon button in a fence's hover controls, highlighted under the pointer.
+private struct PillButton: View {
+    let systemImage: String
+    let color: Color
+    let action: () -> Void
+
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(color.opacity(isEnabled ? 0.95 : 0.35))
+                .frame(width: 26, height: 22)
+                .background(Capsule().fill(color.opacity(hovering && isEnabled ? 0.16 : 0)))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
 

@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 struct ResizeEdges: OptionSet, Hashable {
     let rawValue: Int
@@ -22,6 +23,10 @@ final class FenceCoordinator: ObservableObject {
     /// The item tile last clicked once, shown highlighted like a selected Finder icon.
     @Published var selectedItemID: UUID?
     private var setup: FenceSetupController?
+    private var settingsPopover: NSPopover?
+    private var settingsCloseObserver: NSObjectProtocol?
+    /// The fence whose settings popover is open. Its hover controls stay up meanwhile.
+    @Published private(set) var settingsFenceID: UUID?
     /// The fence brought above app windows by clicking it. It drops back to desktop level on
     /// the next click anywhere else.
     private(set) var raisedFenceID: UUID?
@@ -175,6 +180,7 @@ final class FenceCoordinator: ObservableObject {
         Log.write("deleted fence \"\(fence.title)\" (\(id)) with \(fence.items.count) item(s)")
         if setup?.fenceID == id { setup?.finish() }
         if raisedFenceID == id { lowerRaisedFence() }
+        if settingsFenceID == id { closeSettings() }
         unhide(fence.items)
         controllers.removeValue(forKey: id)?.close()
         tabFrames[id] = nil
@@ -283,9 +289,90 @@ final class FenceCoordinator: ObservableObject {
         guard let id = raisedFenceID else { return }
         raisedFenceID = nil
         raisedOutsideClicks.stop()
+        if settingsFenceID == id { closeSettings() }
         guard setup?.fenceID != id else { return }
         controllers[id]?.window.level = DesktopLevelWindow.desktopLevel
         Log.write("lowered fence \(id)")
+    }
+
+    /// Shows all of a fence's settings in a popover pointing at `anchor` from its `edge`
+    /// (`.minY` is below). Without room there it sits beside the fence instead, so the fence
+    /// stays in view while it changes. The fence is raised meanwhile; the popover's window
+    /// isn't a desktop-level window, so clicks in it count as inside the raised fence. It
+    /// closes on a click in the fence or anywhere outside it.
+    func showSettings(_ id: UUID, from anchor: NSView?, edge: NSRectEdge = .minY) {
+        // Let a menu that triggered this finish closing first.
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.store.fence(id) != nil, let window = self.controllers[id]?.window,
+                      let content = window.contentView else { return }
+                self.closeSettings()
+                self.raise(id)
+                NSApp.activate(ignoringOtherApps: true)
+                let root = FenceSettingsPopover(fenceID: id)
+                    .environmentObject(self.store)
+                    .environmentObject(self)
+                let hosting = NSHostingController(rootView: root)
+                hosting.sizingOptions = [.preferredContentSize]
+                let (view, edge) = Self.settingsPlacement(
+                    size: hosting.view.fittingSize, window: window, content: content,
+                    anchor: anchor?.window === window ? anchor : nil, edge: edge
+                )
+                let popover = NSPopover()
+                popover.behavior = .semitransient
+                popover.appearance = NSAppearance(named: .darkAqua)
+                popover.contentViewController = hosting
+                self.settingsCloseObserver = NotificationCenter.default.addObserver(
+                    forName: NSPopover.didCloseNotification, object: popover, queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.settingsClosed(popover) }
+                }
+                self.settingsPopover = popover
+                self.settingsFenceID = id
+                popover.show(relativeTo: view.bounds, of: view, preferredEdge: edge)
+                // Otherwise the name field takes focus with its text selected, and a stray key
+                // renames the fence.
+                hosting.view.window?.makeFirstResponder(nil)
+                Log.write("settings: opened for fence \(id)")
+            }
+        }
+    }
+
+    /// Where the settings popover goes: off `anchor`'s `edge` if it fits on screen there,
+    /// else right or left of the fence, else off the opposite edge.
+    private static func settingsPlacement(
+        size: CGSize, window: NSWindow, content: NSView, anchor: NSView?, edge: NSRectEdge
+    ) -> (NSView, NSRectEdge) {
+        let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? window.frame
+        let fence = window.frame
+        let anchorView = anchor ?? content
+        let anchorRect = window.convertToScreen(anchorView.convert(anchorView.bounds, to: nil))
+        let margin: CGFloat = 16
+        func fits(_ edge: NSRectEdge, _ rect: CGRect) -> Bool {
+            switch edge {
+            case .minY: rect.minY - screen.minY >= size.height + margin
+            case .maxY: screen.maxY - rect.maxY >= size.height + margin
+            case .maxX: screen.maxX - rect.maxX >= size.width + margin
+            default: rect.minX - screen.minX >= size.width + margin
+            }
+        }
+        if fits(edge, anchorRect) { return (anchorView, edge) }
+        if fits(.maxX, fence) { return (content, .maxX) }
+        if fits(.minX, fence) { return (content, .minX) }
+        return (anchorView, edge == .minY ? .maxY : .minY)
+    }
+
+    func closeSettings() {
+        settingsPopover?.close()
+    }
+
+    private func settingsClosed(_ popover: NSPopover) {
+        guard settingsPopover === popover else { return }
+        settingsCloseObserver.map(NotificationCenter.default.removeObserver)
+        settingsCloseObserver = nil
+        settingsPopover = nil
+        settingsFenceID = nil
+        Log.write("settings: closed")
     }
 
     /// Makes a fence's window key so its title can be edited.
