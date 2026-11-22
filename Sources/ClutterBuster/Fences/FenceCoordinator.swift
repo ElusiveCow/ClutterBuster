@@ -27,13 +27,31 @@ final class FenceCoordinator: ObservableObject {
         self.desktop = desktop
     }
 
-    var collapsedHeight: CGFloat { Self.titleHeight + desktop.footprint.height + 16 }
+    /// Gap between the solid patch and the fence's edges.
+    static let patchInset: CGFloat = 6
+
+    /// Solid patch in the body's bottom-trailing corner that hides the real desktop icon
+    /// stack. It stays opaque at any fence transparency.
+    var patchSize: CGSize {
+        CGSize(width: desktop.footprint.width + 12, height: desktop.footprint.height + 12)
+    }
+
+    var collapsedHeight: CGFloat { Self.titleHeight + patchSize.height + Self.patchInset * 2 }
 
     var minimumSize: CGSize {
-        CGSize(width: max(desktop.footprint.width + 30, 180), height: collapsedHeight)
+        CGSize(width: max(patchSize.width + Self.patchInset * 2, 180), height: collapsedHeight)
     }
 
     func start() {
+        let minimum = minimumSize
+        for fence in store.fences where fence.frame.width < minimum.width || fence.frame.height < minimum.height {
+            store.update(fence.id) { fence in
+                let top = fence.frame.maxY
+                fence.frame.size.width = max(fence.frame.width, minimum.width)
+                fence.frame.size.height = max(fence.frame.height, minimum.height)
+                fence.frame.origin.y = top - fence.frame.height
+            }
+        }
         for fence in store.fences { openWindow(for: fence) }
         restackAll()
         verifyTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in
@@ -58,7 +76,8 @@ final class FenceCoordinator: ObservableObject {
             title: title,
             frame: CGRect(origin: origin, size: size),
             color: AppSettings.defaultColor,
-            iconsPerRow: AppSettings.defaultIconsPerRow
+            iconsPerRow: AppSettings.defaultIconsPerRow,
+            opacity: AppSettings.defaultOpacity
         )
         store.add(fence)
         openWindow(for: fence)
@@ -99,6 +118,10 @@ final class FenceCoordinator: ObservableObject {
 
     func setColor(_ id: UUID, _ color: FenceColor) {
         store.update(id) { $0.color = color }
+    }
+
+    func setOpacity(_ id: UUID, _ opacity: Double) {
+        store.update(id) { $0.opacity = min(max(opacity, 0), 1) }
     }
 
     func setIconsPerRow(_ id: UUID, _ count: Int) {
@@ -286,10 +309,11 @@ final class FenceCoordinator: ObservableObject {
         controllers[id]?.window.setFrame(displayFrame(for: fence), display: true)
     }
 
-    /// Center of the fence body, where its hidden icon stack sits.
+    /// Center of the solid patch, where the fence's hidden icon stack sits.
     private func stackCenter(for fence: Fence) -> CGPoint {
         let frame = displayFrame(for: fence)
-        return CGPoint(x: frame.midX, y: frame.minY + (frame.height - Self.titleHeight) / 2)
+        let size = patchSize
+        return CGPoint(x: frame.maxX - Self.patchInset - size.width / 2, y: frame.minY + Self.patchInset + size.height / 2)
     }
 
     private func stackMoves(for fence: Fence) -> [String: CGPoint] {

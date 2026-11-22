@@ -63,7 +63,8 @@ final class ItemDragView: NSView, NSDraggingSource {
         let draggingItem = NSDraggingItem(pasteboardWriter: pasteboardItem)
         let point = convert(down.locationInWindow, from: nil)
         let frame = NSRect(x: point.x - iconSize / 2, y: point.y - iconSize / 2, width: iconSize, height: iconSize)
-        draggingItem.setDraggingFrame(frame, contents: IconCache.icon(for: item.path))
+        let scale = window?.backingScaleFactor ?? 2
+        draggingItem.setDraggingFrame(frame, contents: IconProvider.shared.currentIcon(for: item.path, pointSize: iconSize, scale: scale))
 
         let session = beginDraggingSession(with: [draggingItem], event: down, source: self)
         session.animatesToStartingPositionsOnCancelOrFail = false

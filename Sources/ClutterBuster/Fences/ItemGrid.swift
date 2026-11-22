@@ -22,6 +22,8 @@ struct GridMetrics {
 
 struct ItemGrid: View {
     let fence: Fence
+    /// Extra scrollable space below the last row so no tile stays stuck under the solid patch.
+    let bottomInset: CGFloat
 
     var body: some View {
         GeometryReader { geo in
@@ -33,8 +35,9 @@ struct ItemGrid: View {
                     Text("Drag files here")
                         .font(.system(size: 12, weight: .medium))
                 }
-                .foregroundStyle(.white.opacity(0.55))
-                .frame(width: geo.size.width, height: geo.size.height)
+                .foregroundStyle(.white.opacity(0.7))
+                .shadow(color: .black.opacity(fence.opacity < 1 ? 0.6 : 0), radius: 2, y: 1)
+                .frame(width: geo.size.width, height: max(geo.size.height - bottomInset, 44))
             } else {
                 ScrollView(.vertical) {
                     LazyVGrid(
@@ -46,7 +49,8 @@ struct ItemGrid: View {
                         }
                     }
                     .padding(.horizontal, GridMetrics.padding)
-                    .padding(.vertical, 8)
+                    .padding(.top, 8)
+                    .padding(.bottom, bottomInset + 8)
                 }
                 .scrollIndicators(.automatic)
             }
@@ -64,10 +68,7 @@ struct ItemTile: View {
     var body: some View {
         let exists = FileManager.default.fileExists(atPath: item.path)
         VStack(spacing: 3) {
-            Image(nsImage: IconCache.icon(for: item.path))
-                .resizable()
-                .interpolation(.high)
-                .frame(width: metrics.icon, height: metrics.icon)
+            ItemIcon(path: item.path, size: metrics.icon)
             if metrics.showLabels {
                 Text(item.displayName)
                     .font(.system(size: metrics.label))
@@ -90,17 +91,5 @@ struct ItemTile: View {
                 coordinator: coordinator
             )
         }
-    }
-}
-
-@MainActor
-enum IconCache {
-    private static var cache: [String: NSImage] = [:]
-
-    static func icon(for path: String) -> NSImage {
-        if let icon = cache[path] { return icon }
-        let icon = NSWorkspace.shared.icon(forFile: path)
-        cache[path] = icon
-        return icon
     }
 }

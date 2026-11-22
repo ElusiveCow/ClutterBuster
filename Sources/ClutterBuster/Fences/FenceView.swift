@@ -18,13 +18,20 @@ struct FenceView: View {
         if let fence = store.fence(fenceID) {
             VStack(spacing: 0) {
                 titleBar(fence)
-                if fence.isCollapsed {
-                    collapsedBody(fence)
-                } else {
-                    ItemGrid(fence: fence)
+                ZStack(alignment: .bottomTrailing) {
+                    if fence.isCollapsed {
+                        collapsedBody(fence)
+                    } else {
+                        ItemGrid(fence: fence, bottomInset: coordinator.patchSize.height + FenceCoordinator.patchInset)
+                    }
+                    StackPatch(fence: fence, size: coordinator.patchSize) {
+                        if fence.isCollapsed { coordinator.toggleCollapse(fenceID) }
+                    }
+                    .padding(FenceCoordinator.patchInset)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: fence.color.body).opacity(backgroundOpacity(fence)))
             }
-            .background(Color(nsColor: fence.color.body))
             .clipShape(RoundedRectangle(cornerRadius: corner))
             .overlay {
                 RoundedRectangle(cornerRadius: corner)
@@ -59,6 +66,7 @@ struct FenceView: View {
                     .foregroundStyle(.white)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .shadow(color: .black.opacity(fence.opacity < 1 ? 0.6 : 0), radius: 2, y: 1)
                     .padding(.horizontal, 34)
             }
             HStack {
@@ -93,7 +101,7 @@ struct FenceView: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: FenceCoordinator.titleHeight)
-        .background(Color(nsColor: fence.color.titleBar))
+        .background(Color(nsColor: fence.color.titleBar).opacity(backgroundOpacity(fence)))
         .contentShape(Rectangle())
         .gesture(moveGesture)
         .simultaneousGesture(TapGesture(count: 2).onEnded { startRename(fence) })
@@ -101,13 +109,17 @@ struct FenceView: View {
     }
 
     private func collapsedBody(_ fence: Fence) -> some View {
-        Text(fence.items.count == 1 ? "1 item" : "\(fence.items.count) items")
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.white.opacity(0.6))
+        Color.clear
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
             .onTapGesture { coordinator.toggleCollapse(fenceID) }
             .contextMenu { FenceMenu(fence: fence, onRename: { startRename(fence) }) }
+    }
+
+    /// Fully transparent pixels let clicks and drops fall through to the desktop, so "Clear"
+    /// keeps a barely visible tint.
+    private func backgroundOpacity(_ fence: Fence) -> Double {
+        max(fence.opacity, 0.03)
     }
 
     private var moveGesture: some Gesture {
@@ -144,6 +156,29 @@ struct FenceView: View {
     }
 }
 
+/// The solid patch over the hidden desktop icon stack, shown as an item-count badge.
+struct StackPatch: View {
+    let fence: Fence
+    let size: CGSize
+    let onTap: () -> Void
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Text("\(fence.items.count)")
+                .font(.system(size: 30, weight: .bold, design: .rounded))
+            Text(fence.items.count == 1 ? "item" : "items")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.7))
+        }
+        .foregroundStyle(.white)
+        .frame(width: size.width, height: size.height)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: fence.color.titleBar)))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.white.opacity(0.1)))
+        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .onTapGesture(perform: onTap)
+    }
+}
+
 struct FenceMenu: View {
     let fence: Fence
     let onRename: () -> Void
@@ -167,6 +202,16 @@ struct FenceMenu: View {
                     coordinator.setIconsPerRow(fence.id, count)
                 } label: {
                     if count == fence.iconsPerRow { Label("\(count)", systemImage: "checkmark") } else { Text("\(count)") }
+                }
+            }
+        }
+        Menu("Transparency") {
+            let current = OpacityPreset.nearest(to: fence.opacity)
+            ForEach(OpacityPreset.allCases) { preset in
+                Button {
+                    coordinator.setOpacity(fence.id, preset.value)
+                } label: {
+                    if preset == current { Label(preset.name, systemImage: "checkmark") } else { Text(preset.name) }
                 }
             }
         }

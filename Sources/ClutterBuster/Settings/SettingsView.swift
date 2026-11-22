@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @AppStorage(AppSettings.defaultColorKey) private var defaultColor: FenceColor = .slate
     @AppStorage(AppSettings.defaultIconsPerRowKey) private var defaultIconsPerRow = 4
+    @AppStorage(AppSettings.defaultOpacityKey) private var defaultOpacity = 1.0
 
     @EnvironmentObject private var store: FenceStore
     let onQuit: () -> Void
@@ -16,11 +17,19 @@ struct SettingsView: View {
                     }
                 }
                 Stepper("Icons per row: \(defaultIconsPerRow)", value: $defaultIconsPerRow, in: AppSettings.iconsPerRowRange)
+                LabeledContent("Opacity") {
+                    HStack {
+                        Slider(value: $defaultOpacity, in: 0...1)
+                        Text(defaultOpacity >= 0.995 ? "Solid" : "\(Int((defaultOpacity * 100).rounded()))%")
+                            .monospacedDigit()
+                            .frame(width: 44, alignment: .trailing)
+                    }
+                }
             }
             Section("About") {
                 LabeledContent("Fences", value: "\(store.fences.count)")
                 LabeledContent("Items", value: "\(store.fences.reduce(0) { $0 + $1.items.count })")
-                Text("Files in fences stay in your Desktop folder. Clutter Buster hides their icons underneath the fence, and quitting puts every icon back where it was.")
+                Text("Files in fences stay in your Desktop folder. Clutter Buster hides their icons underneath the solid item-count patch in each fence, and quitting puts every icon back where it was.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }

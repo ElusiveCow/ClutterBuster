@@ -42,5 +42,53 @@ struct Fence: Codable, Identifiable {
     var isCollapsed = false
     var color: FenceColor
     var iconsPerRow: Int
+    /// Opacity of the fence background, 0 (clear) to 1 (solid). The patch that hides the
+    /// real desktop icons is always solid.
+    var opacity: Double = 1
     var items: [FenceItem] = []
+}
+
+extension Fence {
+    /// Decodes layouts saved by older versions, which lack newer keys.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        frame = try container.decode(CGRect.self, forKey: .frame)
+        isCollapsed = try container.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false
+        color = try container.decodeIfPresent(FenceColor.self, forKey: .color) ?? .slate
+        iconsPerRow = try container.decodeIfPresent(Int.self, forKey: .iconsPerRow) ?? 4
+        opacity = try container.decodeIfPresent(Double.self, forKey: .opacity) ?? 1
+        items = try container.decodeIfPresent([FenceItem].self, forKey: .items) ?? []
+    }
+}
+
+enum OpacityPreset: CaseIterable, Identifiable {
+    case solid, threeQuarters, half, quarter, clear
+
+    var id: Self { self }
+
+    var value: Double {
+        switch self {
+        case .solid: 1
+        case .threeQuarters: 0.75
+        case .half: 0.5
+        case .quarter: 0.25
+        case .clear: 0
+        }
+    }
+
+    var name: String {
+        switch self {
+        case .solid: "Solid"
+        case .threeQuarters: "75%"
+        case .half: "50%"
+        case .quarter: "25%"
+        case .clear: "Clear"
+        }
+    }
+
+    static func nearest(to value: Double) -> OpacityPreset {
+        allCases.min { abs($0.value - value) < abs($1.value - value) } ?? .solid
+    }
 }
