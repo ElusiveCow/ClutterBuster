@@ -180,8 +180,9 @@ final class BlinkView: LayerAnimationView {
         }
         guard sprite.animation(forKey: "blink") == nil else { return }
         let animation = CAKeyframeAnimation(keyPath: "opacity")
+        // Discrete animations hold each value until the next key time, so there's one extra.
         animation.values = [0, 1, 0, 1, 0, 1, 0]
-        animation.keyTimes = [0, 0.4, 0.42, 0.9, 0.92, 0.94, 0.96]
+        animation.keyTimes = [0, 0.4, 0.42, 0.9, 0.92, 0.94, 0.96, 1]
         animation.calculationMode = .discrete
         animation.duration = period
         animation.repeatCount = .infinity
