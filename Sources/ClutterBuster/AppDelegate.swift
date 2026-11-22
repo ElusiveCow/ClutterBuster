@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let desktop = DesktopIconService()
     private lazy var coordinator = FenceCoordinator(store: store, desktop: desktop)
     private var toolbar: ToolbarWindowController?
+    private var search: SearchPanelController?
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
     private var shownAccessAlert = false
@@ -17,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator.start()
 
         let toolbar = ToolbarWindowController(store: store, actions: ToolbarActions(
+            search: { [weak self] in self?.openSearch() },
             newFence: { [weak self] in self?.coordinator.createFence() },
             collapseAll: { [weak self] in self?.coordinator.setAllCollapsed(true) },
             expandAll: { [weak self] in self?.coordinator.setAllCollapsed(false) },
@@ -28,10 +30,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let toolbar, toolbar.isVisible else { return nil }
             return toolbar.window.frame
         }
+        search = SearchPanelController(store: store) { [weak toolbar] in
+            guard let toolbar, toolbar.isVisible else { return nil }
+            return toolbar.window.frame
+        }
         buildStatusItem()
 
         // Ask for Finder access up front rather than on the first drop.
         _ = desktop.positionsNow()
+
+        if let demoSearch = UserDefaults.standard.string(forKey: "CBDemoSearch") {
+            search?.closesWhenInactive = false
+            search?.show(query: demoSearch)
+        }
 
         if let demoPath = UserDefaults.standard.string(forKey: "CBDemoPath") {
             let id = coordinator.createFence(title: "Demo")
@@ -51,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "Clutter Buster")
         let menu = NSMenu()
+        menu.addItem(withTitle: "Search…", action: #selector(openSearch), keyEquivalent: "f").target = self
         menu.addItem(withTitle: "New Fence", action: #selector(newFence), keyEquivalent: "n").target = self
         menu.addItem(withTitle: "Show or Hide Toolbar", action: #selector(toggleToolbar), keyEquivalent: "t").target = self
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
@@ -58,6 +70,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Quit Clutter Buster", action: #selector(quit), keyEquivalent: "q").target = self
         item.menu = menu
         statusItem = item
+    }
+
+    @objc private func openSearch() {
+        search?.show()
     }
 
     @objc private func newFence() {

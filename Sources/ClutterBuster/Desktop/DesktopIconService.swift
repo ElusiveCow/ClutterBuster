@@ -36,6 +36,14 @@ final class DesktopIconService {
         return CGPoint(x: point.x.rounded(), y: (mainHeight - point.y - footprintCenterBelowPosition).rounded())
     }
 
+    /// Screen area (Cocoa coordinates) an icon at a Finder position occupies.
+    func footprintRect(atFinderPosition position: CGPoint) -> CGRect {
+        let mainHeight = NSScreen.screens.first?.frame.height ?? 0
+        let size = footprint
+        let top = position.y - iconSize / 2 - 8
+        return CGRect(x: position.x - size.width / 2, y: mainHeight - top - size.height, width: size.width, height: size.height)
+    }
+
     // MARK: Finder calls
 
     /// Queues icon moves. Rapid calls (such as while dragging a fence) are coalesced.

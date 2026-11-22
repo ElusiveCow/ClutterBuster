@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct ToolbarActions {
+    var search: () -> Void
     var newFence: () -> Void
     var collapseAll: () -> Void
     var expandAll: () -> Void
@@ -13,7 +14,7 @@ struct ToolbarActions {
 final class ToolbarWindowController {
     let window = DesktopLevelWindow()
     private let store: FenceStore
-    private let size = CGSize(width: 400, height: 44)
+    private let size = CGSize(width: 480, height: 44)
 
     init(store: FenceStore, actions: ToolbarActions) {
         self.store = store
@@ -61,12 +62,23 @@ private struct ToolbarView: View {
         HStack(spacing: 8) {
             Image(systemName: "square.grid.2x2.fill")
                 .foregroundStyle(.white.opacity(0.7))
-            Text("Clutter Buster")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.85))
-                .lineLimit(1)
-                .fixedSize()
-            Spacer(minLength: 4)
+                .help("Clutter Buster")
+            Button(action: actions.search) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                    Text("Search").lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.7))
+                .padding(.horizontal, 10)
+                .frame(maxWidth: .infinity)
+                .frame(height: 26)
+                .background(Capsule().fill(Color.white.opacity(0.1)))
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Search fences, the desktop and your Mac")
             ToolbarButton(systemImage: "plus", title: "New Fence", action: actions.newFence)
             ToolbarButton(systemImage: "rectangle.compress.vertical", help: "Collapse all fences", action: actions.collapseAll)
             ToolbarButton(systemImage: "rectangle.expand.vertical", help: "Expand all fences", action: actions.expandAll)

@@ -212,8 +212,9 @@ final class FenceCoordinator: ObservableObject {
             return
         }
         let mainHeight = NSScreen.screens.first?.frame.height ?? 0
-        let target = CGPoint(x: point.x.rounded(), y: (mainHeight - point.y).rounded())
-        Log.write("  decision: back to desktop, Finder position \(target)")
+        let dropped = CGPoint(x: point.x.rounded(), y: (mainHeight - point.y).rounded())
+        let target = openDesktopSpot(near: dropped, for: name)
+        Log.write("  decision: back to desktop, Finder position \(target)\(target == dropped ? "" : " (nudged from \(dropped) to avoid other icons)")")
         desktop.move([name: target])
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             MainActor.assumeIsolated {
@@ -371,6 +372,36 @@ final class FenceCoordinator: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             MainActor.assumeIsolated { self?.restackAll() }
         }
+    }
+
+    /// Nearest Finder position to `target` where an icon won't overlap another visible desktop
+    /// icon, a fence, the toolbar, the menu bar or the Dock.
+    private func openDesktopSpot(near target: CGPoint, for name: String) -> CGPoint {
+        guard let positions = desktop.positionsNow() else { return target }
+        let hidden = Set(store.fences.flatMap { $0.items.filter(\.isOnDesktop).map(\.finderName) })
+        let others = positions.filter { $0.key != name && !hidden.contains($0.key) }.map(\.value)
+        // Matches the spacing between neighboring icons on Finder's desktop grid.
+        let minDX = desktop.iconSize + 32
+        let minDY = desktop.iconSize + 22
+        let step: CGFloat = 16
+        var candidates: [CGPoint] = []
+        for i in -30...30 {
+            for j in -30...30 {
+                candidates.append(CGPoint(x: target.x + CGFloat(i) * step, y: target.y + CGFloat(j) * step))
+            }
+        }
+        candidates.sort { hypot($0.x - target.x, $0.y - target.y) < hypot($1.x - target.x, $1.y - target.y) }
+        let toolbar = toolbarFrame()
+        for candidate in candidates {
+            let rect = desktop.footprintRect(atFinderPosition: candidate).insetBy(dx: 10, dy: 4)
+            guard NSScreen.screens.contains(where: { $0.visibleFrame.contains(rect) }),
+                  !store.fences.contains(where: { displayFrame(for: $0).intersects(rect) }),
+                  toolbar?.intersects(rect) != true,
+                  !others.contains(where: { abs($0.x - candidate.x) < minDX && abs($0.y - candidate.y) < minDY })
+            else { continue }
+            return candidate
+        }
+        return target
     }
 
     /// Describes what covers `point` (Cocoa screen coordinates), or nil if it's open desktop.

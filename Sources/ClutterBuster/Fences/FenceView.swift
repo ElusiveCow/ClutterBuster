@@ -24,10 +24,17 @@ struct FenceView: View {
                     } else {
                         ItemGrid(fence: fence, bottomInset: coordinator.patchSize.height + FenceCoordinator.patchInset)
                     }
-                    StackPatch(fence: fence, size: coordinator.patchSize) {
-                        if fence.isCollapsed { coordinator.toggleCollapse(fenceID) }
+                    GeometryReader { geo in
+                        StackPatch(
+                            fence: fence,
+                            size: coordinator.patchSize,
+                            labelSize: GridMetrics(width: geo.size.width, columns: fence.iconsPerRow).label
+                        ) {
+                            if fence.isCollapsed { coordinator.toggleCollapse(fenceID) }
+                        }
+                        .padding(FenceCoordinator.patchInset)
+                        .frame(width: geo.size.width, height: geo.size.height, alignment: .bottomTrailing)
                     }
-                    .padding(FenceCoordinator.patchInset)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(nsColor: fence.color.body).opacity(backgroundOpacity(fence)))
@@ -156,24 +163,22 @@ struct FenceView: View {
     }
 }
 
-/// The solid patch over the hidden desktop icon stack, shown as an item-count badge.
+/// The solid patch over the hidden desktop icon stack. Its size is fixed by the desktop icon
+/// footprint; the item count matches the fence's label size so it scales with the fence.
 struct StackPatch: View {
     let fence: Fence
     let size: CGSize
+    let labelSize: CGFloat
     let onTap: () -> Void
 
     var body: some View {
-        VStack(spacing: 2) {
-            Text("\(fence.items.count)")
-                .font(.system(size: 30, weight: .bold, design: .rounded))
-            Text(fence.items.count == 1 ? "item" : "items")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.7))
-        }
-        .foregroundStyle(.white)
-        .frame(width: size.width, height: size.height)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: fence.color.titleBar)))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.white.opacity(0.1)))
+        Text(fence.items.count == 1 ? "1 item" : "\(fence.items.count) items")
+            .font(.system(size: labelSize, weight: .medium))
+            .foregroundStyle(.white.opacity(0.6))
+            .lineLimit(1)
+            .frame(width: size.width, height: size.height)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: fence.color.body)))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.white.opacity(0.08)))
         .contentShape(RoundedRectangle(cornerRadius: 10))
         .onTapGesture(perform: onTap)
     }
