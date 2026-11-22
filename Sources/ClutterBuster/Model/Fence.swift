@@ -23,7 +23,8 @@ enum FenceColor: String, Codable, CaseIterable, Identifiable {
 struct FenceItem: Codable, Identifiable {
     var id = UUID()
     var path: String
-    /// Finder position the icon had before it was hidden. Nil for items that aren't on the Desktop.
+    /// Finder position the icon had when it joined a fence, where it goes back when it leaves
+    /// or the app quits. Nil for items that aren't on the Desktop.
     var originalDesktopPosition: CGPoint?
     var addedAt = Date()
     /// The tab the item is shown in. Older layouts lack it; `Fence` assigns the first tab.
@@ -44,8 +45,8 @@ struct Fence: Codable, Identifiable {
     var isCollapsed = false
     var color: FenceColor
     var iconsPerRow: Int
-    /// Opacity of the fence background, 0 (clear) to 1 (solid). The patch that hides the
-    /// real desktop icons is always solid. Like `color`, only Classic uses it.
+    /// Opacity of the fence background, 0 (clear) to 1 (solid). Like `color`, only Classic
+    /// uses it.
     var opacity: Double = 1
     /// Nil follows the global theme in Settings.
     var theme: FenceTheme?

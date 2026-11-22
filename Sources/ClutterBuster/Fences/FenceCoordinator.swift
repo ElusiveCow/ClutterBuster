@@ -8,7 +8,7 @@ struct ResizeEdges: OptionSet, Hashable {
     static let bottom = ResizeEdges(rawValue: 1 << 3)
 }
 
-/// Owns the fence windows and keeps each fence's real Desktop icons stacked underneath it.
+/// Owns the fence windows and hides each fence's Desktop files from Finder while they're in it.
 @MainActor
 final class FenceCoordinator: ObservableObject {
     static let titleHeight: CGFloat = 30
@@ -21,24 +21,24 @@ final class FenceCoordinator: ObservableObject {
     private var liveFrames: [UUID: CGRect] = [:]
     /// Fences being moved or resized. Their theme animations pause meanwhile.
     @Published private(set) var interacting: Set<UUID> = []
-    private var verifyTimer: Timer?
     private var setup: FenceSetupController?
+
+    /// False after `restoreAllToDesktop` until `hideAllFencedFiles`. Items added meanwhile
+    /// stay visible on the Desktop.
+    private(set) var hidesFencedFiles = true
+    /// Fenced Desktop files unhidden for Show in Finder, hidden again by `rehideRevealed`.
+    private var revealed: Set<String> = []
+    private var revealedAt = Date.distantPast
+    private var rehideTimer: Timer?
+    private static let migratedKey = "CBMigratedToHiddenFlag"
 
     init(store: FenceStore, desktop: DesktopIconService) {
         self.store = store
         self.desktop = desktop
     }
 
-    /// Gap between the solid patch and the fence's edges.
-    static let patchInset: CGFloat = 6
-
-    /// Solid patch in the body's bottom-trailing corner that hides the real desktop icon
-    /// stack. It stays opaque at any fence transparency.
-    var patchSize: CGSize {
-        CGSize(width: desktop.footprint.width + 12, height: desktop.footprint.height + 12)
-    }
-
-    var collapsedHeight: CGFloat { Self.titleHeight + patchSize.height + Self.patchInset * 2 }
+    /// A collapsed fence is just its title bar.
+    var collapsedHeight: CGFloat { Self.titleHeight }
 
     /// Height of the tab strip's first row. Each further row adds `tabRowHeight`.
     static let tabBarHeight: CGFloat = 26
@@ -47,7 +47,7 @@ final class FenceCoordinator: ObservableObject {
     static let tabGripHeight: CGFloat = 6
     static let collapsedTabBarHeight: CGFloat = 18
     static let maxTabRows = 4
-    /// Room for a row of icons above the band kept clear for the corner.
+    /// Room for a row of icons.
     static let minimumGridHeight: CGFloat = 72
 
     static func tabStripHeight(rows: Int, collapsed: Bool) -> CGFloat {
@@ -60,10 +60,7 @@ final class FenceCoordinator: ObservableObject {
     }
 
     func minimumSize(for fence: Fence) -> CGSize {
-        CGSize(
-            width: max(patchSize.width + Self.patchInset * 2, 180),
-            height: collapsedHeight + Self.tabStripHeight(fence) + Self.minimumGridHeight
-        )
+        CGSize(width: 180, height: Self.titleHeight + Self.tabStripHeight(fence) + Self.minimumGridHeight)
     }
 
     /// The most tab rows a fence this tall can show: the strip takes at most half the space
@@ -72,7 +69,7 @@ final class FenceCoordinator: ObservableObject {
         var rows = 1
         while rows < Self.maxTabRows {
             let strip = Self.tabStripHeight(rows: rows + 1, collapsed: false)
-            guard collapsedHeight + strip + Self.minimumGridHeight <= height, strip <= (height - Self.titleHeight) / 2 else { break }
+            guard Self.titleHeight + strip + Self.minimumGridHeight <= height, strip <= (height - Self.titleHeight) / 2 else { break }
             rows += 1
         }
         return rows
@@ -96,15 +93,21 @@ final class FenceCoordinator: ObservableObject {
                 fence.frame.origin.y = top - fence.frame.height
             }
         }
+        reconcileHiddenFiles()
         for fence in store.fences { openWindow(for: fence) }
-        restackAll()
-        verifyTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.verifyStacks() }
-        }
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.screensChanged() }
+        }
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                // Revealing can briefly bounce focus back here before Finder takes it.
+                guard let self, Date().timeIntervalSince(self.revealedAt) > 2 else { return }
+                self.rehideRevealed(because: "Clutter Buster became active")
+            }
         }
     }
 
@@ -164,8 +167,9 @@ final class FenceCoordinator: ObservableObject {
 
     func deleteFence(_ id: UUID) {
         guard let fence = store.fence(id) else { return }
+        Log.write("deleted fence \"\(fence.title)\" (\(id)) with \(fence.items.count) item(s)")
         if setup?.fenceID == id { setup?.finish() }
-        desktop.move(restorePositions(for: fence.items, leaving: fence))
+        unhide(fence.items)
         controllers.removeValue(forKey: id)?.close()
         tabFrames[id] = nil
         tabStripFrames[id] = nil
@@ -212,7 +216,6 @@ final class FenceCoordinator: ObservableObject {
     func toggleCollapse(_ id: UUID) {
         store.update(id) { $0.isCollapsed.toggle() }
         applyFrame(id)
-        restack(id)
     }
 
     func setAllCollapsed(_ collapsed: Bool) {
@@ -230,11 +233,12 @@ final class FenceCoordinator: ObservableObject {
     // MARK: Items
 
     /// Adds items to a tab of a fence (its selected tab by default), taking them out of any
-    /// other fence.
+    /// other fence, and hides the Desktop ones from Finder.
     func addItems(_ urls: [URL], to id: UUID, tab: UUID? = nil) {
         guard let fence = store.fence(id) else { return }
         let tabID = tab ?? fence.currentTab.id
         let positions = desktop.positionsNow() ?? [:]
+        var added: [FenceItem] = []
         for url in urls {
             let path = url.standardizedFileURL.path
             var originalFromOtherFence: CGPoint?
@@ -247,9 +251,11 @@ final class FenceCoordinator: ObservableObject {
             let original = DesktopIconService.isOnDesktop(url)
                 ? (originalFromOtherFence ?? positions[url.lastPathComponent])
                 : nil
-            store.update(id) { $0.items.append(FenceItem(path: path, originalDesktopPosition: original, tabID: tabID)) }
+            let item = FenceItem(path: path, originalDesktopPosition: original, tabID: tabID)
+            store.update(id) { $0.items.append(item) }
+            added.append(item)
         }
-        restack(id)
+        hide(added)
     }
 
     // MARK: Tabs
@@ -339,7 +345,8 @@ final class FenceCoordinator: ObservableObject {
     func removeItem(_ itemID: UUID, from id: UUID) {
         guard let fence = store.fence(id), let item = fence.items.first(where: { $0.id == itemID }) else { return }
         store.update(id) { $0.items.removeAll { $0.id == itemID } }
-        desktop.move(restorePositions(for: [item], leaving: fence))
+        Log.write("removed \"\(item.finderName)\" from \"\(fence.title)\"")
+        unhide([item])
     }
 
     /// Called when an item tile is dropped at `point` (Cocoa screen coordinates). Over another
@@ -396,7 +403,7 @@ final class FenceCoordinator: ObservableObject {
         let dropped = CGPoint(x: point.x.rounded(), y: (mainHeight - point.y).rounded())
         let target = openDesktopSpot(near: dropped, for: name)
         Log.write("  decision: back to desktop, Finder position \(target)\(target == dropped ? "" : " (nudged from \(dropped) to avoid other icons)")")
-        desktop.move([name: target])
+        unhide([item], at: [name: target])
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             MainActor.assumeIsolated {
                 self?.desktop.positions { positions in
@@ -411,16 +418,116 @@ final class FenceCoordinator: ObservableObject {
     }
 
     func revealInFinder(_ item: FenceItem) {
-        NSWorkspace.shared.activateFileViewerSelecting([item.url])
+        revealInFinder(item.url)
     }
 
-    /// Puts every hidden icon back where it was. Called when the app quits.
-    func restoreAllIcons() {
+    /// Selects a file in Finder. A fenced Desktop file is unhidden first so Finder can show
+    /// it, and hidden again when Clutter Buster next becomes active, or after a minute.
+    func revealInFinder(_ url: URL) {
+        let url = url.standardizedFileURL
+        guard desktop.hiddenFiles.paths.contains(url.path), !desktop.hiddenFiles.unhide([url]).isEmpty else {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            return
+        }
+        Log.write("show in Finder: unhid \"\(url.lastPathComponent)\" until Clutter Buster is active again")
+        revealed.insert(url.path)
+        revealedAt = Date()
+        rehideTimer?.invalidate()
+        rehideTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.rehideRevealed(because: "a minute passed") }
+        }
+        // A Finder window opened in the same instant can miss the file it was asked to select.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+    }
+
+    // MARK: Hiding Desktop files
+
+    /// Hides the Desktop files of fenced items from Finder, unless everything is restored to
+    /// the Desktop right now. Record each item's position before calling this.
+    func hide(_ items: [FenceItem]) {
+        guard hidesFencedFiles else { return }
+        let hidden = desktop.hiddenFiles.hide(items.filter(\.isOnDesktop).map(\.url))
+        guard !hidden.isEmpty else { return }
+        Log.write("hid \(hidden.count) Desktop file(s): \(hidden.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))")
+    }
+
+    /// Puts the Desktop icons of items leaving a fence at `positions` (keyed by Finder name),
+    /// or back at their original positions, then unhides them. Finder moves hidden icons, so
+    /// each one shows up in its spot. Posts `clutterBusterDidUnhideFiles`.
+    func unhide(_ items: [FenceItem], at positions: [String: CGPoint] = [:]) {
+        let items = items.filter(\.isOnDesktop)
+        guard !items.isEmpty else { return }
         var moves: [String: CGPoint] = [:]
-        for fence in store.fences {
-            moves.merge(restorePositions(for: fence.items, leaving: fence)) { $1 }
+        for item in items {
+            let wasHidden = desktop.hiddenFiles.paths.contains(item.path) || revealed.contains(item.path)
+            if let target = positions[item.finderName] ?? (wasHidden ? item.originalDesktopPosition : nil) {
+                moves[item.finderName] = target
+            }
         }
         desktop.moveNow(moves)
+        revealed.subtract(items.map(\.path))
+        let unhidden = desktop.hiddenFiles.unhide(items.map(\.url))
+        guard !unhidden.isEmpty else { return }
+        Log.write("unhid \(unhidden.count) Desktop file(s): \(unhidden.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))")
+    }
+
+    /// Puts every fenced Desktop file back on the Desktop at its original position and
+    /// unhides it. Fences keep their items. Used when quitting, and to show the plain Desktop
+    /// until `hideAllFencedFiles`.
+    func restoreAllToDesktop() {
+        rehideTimer?.invalidate()
+        unhide(store.fences.flatMap(\.items))
+        hidesFencedFiles = false
+    }
+
+    /// Hides every fenced Desktop file again after `restoreAllToDesktop`. With
+    /// `recordPositions`, first remembers where each visible icon sits now, so that's where it
+    /// goes back to.
+    func hideAllFencedFiles(recordPositions: Bool) {
+        hidesFencedFiles = true
+        if recordPositions, let positions = desktop.positionsNow() {
+            for fence in store.fences {
+                store.update(fence.id) { fence in
+                    for index in fence.items.indices where fence.items[index].isOnDesktop {
+                        guard let position = positions[fence.items[index].finderName] else { continue }
+                        fence.items[index].originalDesktopPosition = position
+                    }
+                }
+            }
+        }
+        hide(store.fences.flatMap(\.items))
+    }
+
+    /// Runs at launch before any fence shows. Fenced Desktop files get hidden, which also
+    /// moves layouts from versions that piled icons under each fence onto the hidden flag
+    /// (their original positions are kept). Files Clutter Buster hid that are no longer in a
+    /// fence, say after a crash, are unhidden where they are.
+    private func reconcileHiddenFiles() {
+        let fenced = store.fences.flatMap(\.items).filter(\.isOnDesktop)
+        let orphans = desktop.hiddenFiles.paths.subtracting(fenced.map(\.path))
+        if !orphans.isEmpty {
+            let unhidden = desktop.hiddenFiles.unhide(orphans.map { URL(fileURLWithPath: $0) })
+            Log.write("launch: unhid \(unhidden.count) file(s) no longer in a fence: \(unhidden.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))")
+        }
+        if !UserDefaults.standard.bool(forKey: Self.migratedKey) {
+            Log.write("launch: moving \(fenced.count) fenced Desktop file(s) from icon stacks to the hidden flag")
+            UserDefaults.standard.set(true, forKey: Self.migratedKey)
+        }
+        hide(fenced)
+        Log.write("launch: \(fenced.count) fenced Desktop file(s), \(desktop.hiddenFiles.paths.count) hidden by Clutter Buster")
+    }
+
+    /// Hides files unhidden for Show in Finder again, if they're still fenced.
+    private func rehideRevealed(because reason: String) {
+        rehideTimer?.invalidate()
+        rehideTimer = nil
+        guard !revealed.isEmpty else { return }
+        Log.write("show in Finder: hiding revealed file(s) again, \(reason)")
+        let items = store.fences.flatMap(\.items).filter { revealed.contains($0.path) }
+        revealed = []
+        hide(items)
     }
 
     // MARK: Moving and resizing
@@ -436,7 +543,6 @@ final class FenceCoordinator: ObservableObject {
     func updateLiveFrame(_ id: UUID, _ frame: CGRect) {
         liveFrames[id] = frame
         applyFrame(id)
-        restack(id)
     }
 
     func endInteraction(_ id: UUID) {
@@ -446,7 +552,6 @@ final class FenceCoordinator: ObservableObject {
         interacting.remove(id)
         clampToScreens(id)
         applyFrame(id)
-        restack(id)
     }
 
     func resizedFrame(_ id: UUID, from start: CGRect, edges: ResizeEdges, delta: CGSize) -> CGRect {
@@ -472,7 +577,7 @@ final class FenceCoordinator: ObservableObject {
         return frame
     }
 
-    // MARK: Windows and stacks
+    // MARK: Windows
 
     private func openWindow(for fence: Fence) {
         let controller = FenceWindowController(fenceID: fence.id, coordinator: self)
@@ -493,67 +598,10 @@ final class FenceCoordinator: ObservableObject {
         if setup?.fenceID == id { setup?.reposition() }
     }
 
-    /// Center of the solid patch, where the fence's hidden icon stack sits.
-    private func stackCenter(for fence: Fence) -> CGPoint {
-        let frame = displayFrame(for: fence)
-        let size = patchSize
-        return CGPoint(x: frame.maxX - Self.patchInset - size.width / 2, y: frame.minY + Self.patchInset + size.height / 2)
-    }
-
-    private func stackMoves(for fence: Fence) -> [String: CGPoint] {
-        let target = desktop.finderPosition(centeredOn: stackCenter(for: fence))
-        var moves: [String: CGPoint] = [:]
-        for item in fence.items where item.isOnDesktop {
-            moves[item.finderName] = target
-        }
-        return moves
-    }
-
-    private func restack(_ id: UUID) {
-        guard let fence = store.fence(id) else { return }
-        desktop.move(stackMoves(for: fence))
-    }
-
-    private func restackAll() {
-        var moves: [String: CGPoint] = [:]
-        for fence in store.fences { moves.merge(stackMoves(for: fence)) { $1 } }
-        desktop.move(moves)
-    }
-
-    private func restorePositions(for items: [FenceItem], leaving fence: Fence) -> [String: CGPoint] {
-        let frame = displayFrame(for: fence)
-        let fallback = desktop.finderPosition(centeredOn: CGPoint(x: frame.maxX + desktop.footprint.width / 2 + 10, y: frame.maxY - 80))
-        var moves: [String: CGPoint] = [:]
-        for item in items where item.isOnDesktop {
-            moves[item.finderName] = item.originalDesktopPosition ?? fallback
-        }
-        return moves
-    }
-
-    /// Finder can drop icons back into place (Finder restarts, Clean Up, display changes),
-    /// so periodically put any stray icon back into its stack.
-    private func verifyStacks() {
-        guard interacting.isEmpty, !store.fences.isEmpty else { return }
-        desktop.positions { [weak self] positions in
-            guard let self, let positions, self.interacting.isEmpty else { return }
-            var fixes: [String: CGPoint] = [:]
-            for fence in self.store.fences {
-                for (name, target) in self.stackMoves(for: fence) {
-                    guard let current = positions[name] else { continue }
-                    if hypot(current.x - target.x, current.y - target.y) > 3 { fixes[name] = target }
-                }
-            }
-            self.desktop.move(fixes)
-        }
-    }
-
     private func screensChanged() {
         for fence in store.fences {
             clampToScreens(fence.id)
             applyFrame(fence.id)
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-            MainActor.assumeIsolated { self?.restackAll() }
         }
     }
 

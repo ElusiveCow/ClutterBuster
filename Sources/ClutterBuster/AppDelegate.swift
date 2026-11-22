@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator.start()
 
         let search = SearchController(store: store) { [weak self] in self?.toolbar?.window }
+        search.reveal = { [weak self] url in self?.coordinator.revealInFinder(url) }
         self.search = search
         let toolbar = ToolbarWindowController(store: store, search: search, actions: ToolbarActions(
             newFence: { [weak self] in self?.coordinator.createFenceWithSetup() },
@@ -58,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        coordinator.restoreAllIcons()
+        coordinator.restoreAllToDesktop()
         store.saveNow()
         return .terminateNow
     }
@@ -118,7 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shownAccessAlert = true
         let alert = NSAlert()
         alert.messageText = "Clutter Buster needs permission to control Finder"
-        alert.informativeText = "It uses Finder to hide desktop icons underneath your fences. Turn on Finder for Clutter Buster in System Settings > Privacy & Security > Automation, then reopen the app."
+        alert.informativeText = "It uses Finder to put desktop icons back where they were when they leave a fence. Turn on Finder for Clutter Buster in System Settings > Privacy & Security > Automation, then reopen the app."
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Later")
         NSApp.activate(ignoringOtherApps: true)

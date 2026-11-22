@@ -70,8 +70,9 @@ struct ThemeStyle {
     var body: ThemeFill
     /// 1 is solid. Glass bodies are always see-through.
     var bodyOpacity: Double = 1
-    /// Solid color matching the body near its bottom-right corner, behind the corner art.
-    var plate: Color
+    /// Solid color matching the body near its bottom, for surfaces that can't be see-through
+    /// such as the search dropdown.
+    var solidBody: Color
     var pattern: ThemePattern = .none
 
     var titleBar: ThemeFill
@@ -93,12 +94,12 @@ struct ThemeStyle {
     var accent: Color = .accentColor
 
     var cornerArt: String?
-    /// Corner art width relative to the patch width.
+    /// Corner art width relative to `CornerArt.baseWidth`.
     var artScale: CGFloat = 1.2
     var particle: ThemeParticle?
     var titleAccent: TitleAccent = .none
 
-    /// True when the desktop shows through the body, so the patch must hide the icon stack.
+    /// True when the desktop shows through the body.
     var isSeeThrough: Bool {
         if case .glass = body { return true }
         return bodyOpacity < 1
@@ -112,15 +113,6 @@ struct ThemeStyle {
     /// The style a fence draws with: its own theme, or the global one when it has none.
     static func resolve(_ fence: Fence, global: FenceTheme) -> ThemeStyle {
         of(fence.theme ?? global, for: fence)
-    }
-
-    /// A collapsed body is nearly all corner, so illustrated themes go solid rather than show
-    /// the edge of the plate.
-    func collapsed(_ isCollapsed: Bool) -> ThemeStyle {
-        guard isCollapsed, cornerArt != nil else { return self }
-        var style = self
-        style.bodyOpacity = 1
-        return style
     }
 
     /// A theme's style as it would look on `fence`; Classic uses the fence's color and opacity.
@@ -137,7 +129,7 @@ struct ThemeStyle {
             // Fully transparent pixels let clicks and drops fall through to the desktop, so
             // "Clear" keeps a barely visible tint.
             bodyOpacity: max(min(opacity, 1), 0.03),
-            plate: body,
+            solidBody: body,
             titleBar: .color(titleBar),
             tabStrip: Color(nsColor: color.titleBar.blended(withFraction: 0.08, of: .white) ?? color.titleBar),
             tabPill: .white.opacity(0.35),
@@ -151,7 +143,7 @@ struct ThemeStyle {
         guard theme == .classic else { return theme.style }
         var style = classic(color: .graphite, opacity: 1)
         style.titleBar = .color(Color(white: 0.12).opacity(0.94))
-        style.plate = Color(white: 0.12)
+        style.solidBody = Color(white: 0.12)
         return style
     }
 
@@ -166,7 +158,7 @@ struct ThemeStyle {
                 theme: theme,
                 isLight: true,
                 body: .gradient([Color(hex: 0xFBFBFD), Color(hex: 0xEEF0F5)]),
-                plate: Color(hex: 0xEEF0F5),
+                solidBody: Color(hex: 0xEEF0F5),
                 titleBar: .gradient([.white, Color(hex: 0xF5F6F9)]),
                 titleText: ink,
                 titleSecondary: Color(hex: 0x6E6E78),
@@ -186,7 +178,7 @@ struct ThemeStyle {
                 theme: theme,
                 body: .gradient([Color(hex: 0x8F4B1D), Color(hex: 0x6A3312)]),
                 bodyOpacity: 0.9,
-                plate: Color(hex: 0x6A3312),
+                solidBody: Color(hex: 0x6A3312),
                 titleBar: .gradient([Color(hex: 0x7C3A12), Color(hex: 0x6B300E)]),
                 titleText: Color(hex: 0xFFF3E4),
                 titleSecondary: Color(hex: 0xF5C08A),
@@ -208,7 +200,7 @@ struct ThemeStyle {
                 theme: theme,
                 body: .gradient([Color(hex: 0x76A6D2), Color(hex: 0x4A7BA6)]),
                 bodyOpacity: 0.86,
-                plate: Color(hex: 0x4A7BA6),
+                solidBody: Color(hex: 0x4A7BA6),
                 pattern: .snow,
                 titleBar: .gradient([Color(hex: 0x3F6C95), Color(hex: 0x365F86)]),
                 titleSecondary: Color(hex: 0xCFE6FA),
@@ -231,7 +223,7 @@ struct ThemeStyle {
                 isLight: true,
                 body: .gradient([Color(hex: 0xFDE7EF), Color(hex: 0xF8CEDD)]),
                 bodyOpacity: 0.9,
-                plate: Color(hex: 0xF8CEDD),
+                solidBody: Color(hex: 0xF8CEDD),
                 titleBar: .gradient([Color(hex: 0xF6B3C8), Color(hex: 0xF1A2BB)]),
                 titleText: ink,
                 titleSecondary: Color(hex: 0x8E4568),
@@ -254,7 +246,7 @@ struct ThemeStyle {
                 theme: theme,
                 body: .gradient([Color(hex: 0x0F5384), Color(hex: 0x08304F)]),
                 bodyOpacity: 0.88,
-                plate: Color(hex: 0x08304F),
+                solidBody: Color(hex: 0x08304F),
                 pattern: .waves,
                 titleBar: .gradient([Color(hex: 0x0A3B62), Color(hex: 0x083456)]),
                 titleSecondary: Color(hex: 0x9FD6F7),
@@ -273,7 +265,7 @@ struct ThemeStyle {
             return ThemeStyle(
                 theme: theme,
                 body: .glass,
-                plate: Color(hex: 0x3B3E46),
+                solidBody: Color(hex: 0x3B3E46),
                 titleBar: .gradient([Color(hex: 0x30333A), Color(hex: 0x2A2C32)]),
                 titleSecondary: .white.opacity(0.6),
                 tabStrip: Color(hex: 0x383B42),
@@ -288,7 +280,7 @@ struct ThemeStyle {
                 theme: theme,
                 body: .gradient([Color(hex: 0x2C1660), Color(hex: 0x6C2384), Color(hex: 0xB8357E)]),
                 bodyOpacity: 0.9,
-                plate: Color(hex: 0xB8357E),
+                solidBody: Color(hex: 0xB8357E),
                 pattern: .retroGrid,
                 titleBar: .gradient([Color(hex: 0x1F0F45), Color(hex: 0x27124F)]),
                 titleSecondary: Color(hex: 0xFF9BD8),
@@ -309,7 +301,7 @@ struct ThemeStyle {
                 theme: theme,
                 body: .gradient([Color(hex: 0x2E1846), Color(hex: 0x1B0D2B)]),
                 bodyOpacity: 0.9,
-                plate: Color(hex: 0x1B0D2B),
+                solidBody: Color(hex: 0x1B0D2B),
                 pattern: .sparkles,
                 titleBar: .gradient([Color(hex: 0xF28C28), Color(hex: 0xDB6C14)]),
                 titleText: ink,
@@ -330,7 +322,7 @@ struct ThemeStyle {
                 theme: theme,
                 body: .gradient([Color(hex: 0x1E5C3B), Color(hex: 0x144529)]),
                 bodyOpacity: 0.92,
-                plate: Color(hex: 0x144529),
+                solidBody: Color(hex: 0x144529),
                 pattern: .snow,
                 titleBar: .gradient([Color(hex: 0xB8212F), Color(hex: 0x9A1A26)]),
                 titleSecondary: Color(hex: 0xFFC9CD),
@@ -350,7 +342,7 @@ struct ThemeStyle {
                 theme: theme,
                 body: .gradient([Color(hex: 0x6E4529), Color(hex: 0x50301B)]),
                 bodyOpacity: 0.92,
-                plate: Color(hex: 0x50301B),
+                solidBody: Color(hex: 0x50301B),
                 pattern: .woodGrain,
                 titleBar: .gradient([Color(hex: 0x3F2716), Color(hex: 0x372112)]),
                 titleText: Color(hex: 0xFFF2E2),
@@ -373,7 +365,7 @@ struct ThemeStyle {
                 theme: theme,
                 body: .gradient([Color(hex: 0x0C0B2C), Color(hex: 0x1D1150)]),
                 bodyOpacity: 0.92,
-                plate: Color(hex: 0x1D1150),
+                solidBody: Color(hex: 0x1D1150),
                 pattern: .nebula,
                 titleBar: .gradient([Color(hex: 0x0A0920), Color(hex: 0x0D0B28)]),
                 titleSecondary: Color(hex: 0xB9A8FF),
@@ -392,7 +384,7 @@ struct ThemeStyle {
                 theme: theme,
                 body: .gradient([Color(hex: 0x21593A), Color(hex: 0x123D23)]),
                 bodyOpacity: 0.9,
-                plate: Color(hex: 0x123D23),
+                solidBody: Color(hex: 0x123D23),
                 pattern: .sparkles,
                 titleBar: .gradient([Color(hex: 0x0F3420), Color(hex: 0x0C2D1B)]),
                 titleSecondary: Color(hex: 0xB6E4AA),
@@ -410,7 +402,7 @@ struct ThemeStyle {
             return ThemeStyle(
                 theme: theme,
                 body: .gradient([Color(hex: 0x4C2E1B), Color(hex: 0x301C10)]),
-                plate: Color(hex: 0x301C10),
+                solidBody: Color(hex: 0x301C10),
                 pattern: .woodGrain,
                 titleBar: .gradient([Color(hex: 0x2B170B), Color(hex: 0x241309)]),
                 titleText: Color(hex: 0xF6E7C9),
@@ -435,7 +427,7 @@ struct ThemeStyle {
                 isLight: true,
                 body: .gradient([Color(hex: 0xF5E6C6), Color(hex: 0xE9D19F)]),
                 bodyOpacity: 0.9,
-                plate: Color(hex: 0xE9D19F),
+                solidBody: Color(hex: 0xE9D19F),
                 pattern: .waves,
                 titleBar: .gradient([Color(hex: 0x3FA7CB), Color(hex: 0x3496BA)]),
                 titleSecondary: Color(hex: 0xDDF4FC),
@@ -459,7 +451,7 @@ struct ThemeStyle {
                 isLight: true,
                 body: .gradient([Color(hex: 0xE8E3D8), Color(hex: 0xD3CBBC)]),
                 bodyOpacity: 0.9,
-                plate: Color(hex: 0xD3CBBC),
+                solidBody: Color(hex: 0xD3CBBC),
                 pattern: .sandRakes,
                 titleBar: .gradient([Color(hex: 0x6E695F), Color(hex: 0x625D54)]),
                 titleSecondary: Color(hex: 0xE2DCCF),
@@ -480,7 +472,7 @@ struct ThemeStyle {
             return ThemeStyle(
                 theme: theme,
                 body: .gradient([Color(hex: 0x16123A), Color(hex: 0x0C0A20)]),
-                plate: Color(hex: 0x0C0A20),
+                solidBody: Color(hex: 0x0C0A20),
                 pattern: .scanlines,
                 titleBar: .gradient([Color(hex: 0x231C55), Color(hex: 0x1E184A)]),
                 titleText: Color(hex: 0xFFE45C),
@@ -503,7 +495,7 @@ struct ThemeStyle {
                 isLight: true,
                 body: .gradient([Color(hex: 0xF6EDF9), Color(hex: 0xE8DAF2)]),
                 bodyOpacity: 0.9,
-                plate: Color(hex: 0xE8DAF2),
+                solidBody: Color(hex: 0xE8DAF2),
                 pattern: .sparkles,
                 titleBar: .gradient([Color(hex: 0xCDB6E6), Color(hex: 0xC2A9DF)]),
                 titleText: ink,

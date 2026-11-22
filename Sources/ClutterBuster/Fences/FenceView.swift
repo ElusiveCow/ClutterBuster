@@ -21,34 +21,26 @@ struct FenceView: View {
 
     var body: some View {
         if let fence = store.fence(fenceID) {
-            let style = ThemeStyle.resolve(fence, global: themes.globalTheme).collapsed(fence.isCollapsed)
+            let style = ThemeStyle.resolve(fence, global: themes.globalTheme)
             let animate = themes.animates && !coordinator.interacting.contains(fenceID)
             let tab = fence.currentTab
             VStack(spacing: 0) {
                 titleBar(fence, style: style, animate: animate)
-                if !fence.isCollapsed { tabBar(fence, style: style) }
-                GeometryReader { geo in
-                    let patch = coordinator.patchSize
-                    ZStack(alignment: .bottomTrailing) {
-                        ThemeBody(style: style, animate: animate)
-                        // The body already hides the icon stack when it's solid.
-                        if style.isSeeThrough {
-                            CornerPlate(style: style, patch: patch)
-                                .padding(FenceCoordinator.patchInset)
-                        }
-                        if fence.isCollapsed {
-                            collapsedBody(fence)
-                        } else {
+                if !fence.isCollapsed {
+                    tabBar(fence, style: style)
+                    GeometryReader { geo in
+                        ZStack(alignment: .bottomTrailing) {
+                            ThemeBody(style: style, animate: animate)
                             ItemGrid(
                                 fence: fence,
                                 style: style,
                                 items: coordinator.displayedItems(fence, tab: tab),
                                 reservedBottom: cornerBand(style, area: geo.size)
                             )
+                            CornerArt(style: style, area: geo.size, animate: animate)
                         }
-                        CornerArt(style: style, patch: patch, area: geo.size, animate: animate)
+                        .frame(width: geo.size.width, height: geo.size.height)
                     }
-                    .frame(width: geo.size.width, height: geo.size.height)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: corner))
@@ -378,23 +370,11 @@ struct FenceView: View {
         coordinator.renameTab(fenceID, tabID, to: tabDraft)
     }
 
-    private func collapsedBody(_ fence: Fence) -> some View {
-        Color.clear
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .onTapGesture { coordinator.toggleCollapse(fenceID) }
-            .contextMenu { FenceMenu(fence: fence, onRename: { startRename(fence) }, onNewTab: addTab) }
-    }
-
-    /// Height along the bottom that tiles stay above: the corner art, or the plate over the
-    /// patch on see-through fences without art. Solid fences without art use the full height.
+    /// Height along the bottom that tiles stay above so they never sit behind the corner art.
+    /// Without art the grid uses the full height.
     private func cornerBand(_ style: ThemeStyle, area: CGSize) -> CGFloat {
-        let margin: CGFloat = 4
-        if let art = CornerArt.size(for: style, patch: coordinator.patchSize, area: area) {
-            return art.height + CornerArt.padding + margin
-        }
-        guard style.isSeeThrough else { return 0 }
-        return coordinator.patchSize.height + FenceCoordinator.patchInset + CornerPlate.spill(style) + margin
+        guard let art = CornerArt.size(for: style, area: area) else { return 0 }
+        return art.height + CornerArt.padding + 4
     }
 
     private var moveGesture: some Gesture {

@@ -32,8 +32,8 @@ struct ItemGrid: View {
     let style: ThemeStyle
     /// The selected tab's items, in display order.
     let items: [FenceItem]
-    /// Height of the band along the bottom kept clear for corner art or the patch plate.
-    /// The grid stops above it, so tiles never scroll underneath.
+    /// Height of the band along the bottom kept clear for the corner art. The grid stops
+    /// above it, so tiles never scroll underneath.
     let reservedBottom: CGFloat
 
     @EnvironmentObject private var coordinator: FenceCoordinator

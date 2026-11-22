@@ -342,84 +342,36 @@ private struct RainbowBorder: View {
 
 // MARK: Corner
 
-/// Solid cover over the patch area, which hides the stacked desktop icons when the body is
-/// see-through. It's 100% opaque across the whole patch and only feathers out beyond it.
-struct CornerPlate: View {
-    let style: ThemeStyle
-    let patch: CGSize
-
-    /// How far the plate's solid edge reaches past the patch.
-    static func spill(_ style: ThemeStyle) -> CGFloat {
-        switch style.theme {
-        case .classic: 3
-        case .glass: 5
-        default: 0
-        }
-    }
-
-    var body: some View {
-        Group {
-            switch style.theme {
-            case .classic:
-                // Grown so the rounded corners still cover the patch's corners.
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(style.plate)
-                    .frame(width: patch.width + 6, height: patch.height + 6)
-                    .padding(-3)
-            case .glass:
-                let shape = RoundedRectangle(cornerRadius: 14)
-                shape
-                    .fill(LinearGradient(colors: [Color(hex: 0x40434B), Color(hex: 0x2C2E34)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.3), .white.opacity(0.05)], startPoint: .top, endPoint: .bottom), lineWidth: 1))
-                    .shadow(color: .black.opacity(0.25), radius: 4, y: 1)
-                    .frame(width: patch.width + 10, height: patch.height + 10)
-                    .padding(-5)
-            default:
-                let feather: CGFloat = 30
-                ZStack {
-                    Rectangle()
-                        .fill(style.plate)
-                        .frame(width: patch.width + feather * 2, height: patch.height + feather * 2)
-                        .blur(radius: feather * 0.6)
-                    Rectangle()
-                        .fill(style.plate)
-                        .frame(width: patch.width, height: patch.height)
-                }
-                .frame(width: patch.width, height: patch.height)
-            }
-        }
-        .allowsHitTesting(false)
-    }
-}
-
-/// The theme's corner illustration, sized from the patch and kept inside the body.
+/// The theme's corner illustration: pure decoration in the body's bottom-trailing corner.
 struct CornerArt: View {
     let style: ThemeStyle
-    let patch: CGSize
     let area: CGSize
     let animate: Bool
 
     static let padding: CGFloat = 3
+    /// Width at an `artScale` of 1, and the tallest the art gets.
+    static let baseWidth: CGFloat = 130
+    static let maxHeight: CGFloat = 110
 
-    /// Big enough to sit over the patch with a little spill on see-through fences. Solid
-    /// fences have nothing to cover, so their art stays smaller.
-    static func size(for style: ThemeStyle, patch: CGSize, area: CGSize) -> CGSize? {
+    /// Shrinks on small fences so the grid above it keeps room for a row of icons, and isn't
+    /// drawn at all when it would be too small to make out.
+    static func size(for style: ThemeStyle, area: CGSize) -> CGSize? {
         guard let name = style.cornerArt, let image = ThemeArt.image(name), image.size.width > 0 else { return nil }
         let aspect = image.size.height / image.size.width
-        let maxWidth = style.isSeeThrough ? patch.width + 16 : patch.width * 0.85
-        var width = min(patch.width * style.artScale, maxWidth, area.width - 8)
+        var width = min(baseWidth * style.artScale, area.width * 0.45)
         var height = width * aspect
-        let maxHeight = min(style.isSeeThrough ? patch.height + 4 : patch.height * 0.8, area.height - 4)
+        let maxHeight = min(Self.maxHeight, area.height - FenceCoordinator.minimumGridHeight - padding)
         if height > maxHeight {
             height = maxHeight
             width = height / aspect
         }
-        return CGSize(width: max(width, 0), height: max(height, 0))
+        guard height >= 32 else { return nil }
+        return CGSize(width: width, height: height)
     }
 
     var body: some View {
         if let name = style.cornerArt, let image = ThemeArt.image(name),
-           let size = Self.size(for: style, patch: patch, area: area) {
+           let size = Self.size(for: style, area: area) {
             Image(nsImage: image)
                 .resizable()
                 .interpolation(style.theme == .arcade ? .none : .high)
@@ -575,9 +527,6 @@ struct ThemePreview: View {
                             .aspectRatio(contentMode: .fit)
                             .frame(maxWidth: w * 0.5, maxHeight: h * 0.42, alignment: .bottomTrailing)
                             .padding(w * 0.02)
-                    } else if style.isSeeThrough {
-                        CornerPlate(style: style, patch: CGSize(width: w * 0.3, height: h * 0.24))
-                            .padding(w * 0.05)
                     }
                 }
             }

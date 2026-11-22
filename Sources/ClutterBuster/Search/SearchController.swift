@@ -26,6 +26,8 @@ final class SearchController: NSObject, NSTextFieldDelegate {
     /// Scripted demos launch while another app is in front, and it takes focus straight back.
     /// Until this time passes, clicking elsewhere or switching apps leaves the dropdown open.
     var holdsOpenUntil = Date.distantPast
+    /// Shows a result in Finder. Fenced Desktop files have to be unhidden first.
+    var reveal: (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
 
     private let panel = DropdownPanel()
     private let width: CGFloat = 560
@@ -110,7 +112,7 @@ final class SearchController: NSObject, NSTextFieldDelegate {
 
     private func open(_ result: SearchResult, reveal: Bool) {
         if reveal {
-            NSWorkspace.shared.activateFileViewerSelecting([result.url])
+            self.reveal(result.url)
         } else {
             NSWorkspace.shared.open(result.url)
         }
@@ -269,7 +271,7 @@ private struct SearchResultsView: View {
                 if let index { proxy.scrollTo(index) }
             }
         }
-        .background(RoundedRectangle(cornerRadius: 12).fill(style.plate))
+        .background(RoundedRectangle(cornerRadius: 12).fill(style.solidBody))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(ThemeBorderView(border: style.border, cornerRadius: 12))
     }
