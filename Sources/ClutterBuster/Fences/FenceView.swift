@@ -119,7 +119,7 @@ struct FenceView: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: FenceCoordinator.titleHeight)
-        .background(Color(nsColor: fence.color.titleBar).opacity(backgroundOpacity(fence)))
+        .background(Color(nsColor: fence.color.titleBar))
         .contentShape(Rectangle())
         .gesture(moveGesture)
         .simultaneousGesture(TapGesture(count: 2).onEnded { startRename(fence) })
@@ -172,7 +172,7 @@ struct FenceView: View {
             .padding(.trailing, 6)
         }
         .frame(height: FenceCoordinator.tabBarHeight)
-        .background(Color(nsColor: fence.color.titleBar).opacity(backgroundOpacity(fence) * 0.6))
+        .background(Color(nsColor: fence.color.titleBar.blended(withFraction: 0.08, of: .white) ?? fence.color.titleBar))
     }
 
     private func tabButton(_ fence: Fence, _ tab: FenceTab) -> some View {
@@ -181,9 +181,9 @@ struct FenceView: View {
             if editingTabID == tab.id {
                 TextField("Tab name", text: $tabDraft)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white)
-                    .frame(width: max(50, CGFloat(tabDraft.count) * 7 + 10))
+                    .frame(width: max(50, CGFloat(tabDraft.count) * 8 + 10))
                     .focused($tabFieldFocused)
                     .onSubmit(commitTabRename)
                     .onExitCommand { editingTabID = nil }
@@ -192,15 +192,16 @@ struct FenceView: View {
                     }
             } else {
                 Text(tab.name)
-                    .font(.system(size: 11, weight: selected ? .semibold : .medium))
+                    .font(.system(size: 12, weight: selected ? .semibold : .regular))
                     .foregroundStyle(.white.opacity(selected ? 1 : 0.65))
+                    .shadow(color: .black.opacity(0.45), radius: 1.5, y: 1)
                     .lineLimit(1)
                     .fixedSize()
             }
         }
         .padding(.horizontal, 9)
-        .frame(height: 20)
-        .background(Capsule().fill(Color.white.opacity(selected ? 0.2 : 0)))
+        .frame(height: 21)
+        .background(Capsule().fill(Color.white.opacity(selected ? 0.35 : 0)))
         .contentShape(Capsule())
         .background(GeometryReader { geo in
             Color.clear.preference(key: TabFramesKey.self, value: [tab.id: geo.frame(in: .global)])
