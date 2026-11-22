@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Builds "build/Clutter Buster.app" from the Swift package.
+# Pass --install to also install it into Applications and launch it (see scripts/install-app.sh).
 # Run scripts/setup-signing.sh once first so permission grants survive rebuilds.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -15,6 +16,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/ClutterBuster"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 # Sign by hash so a duplicate certificate with the same name can't make codesign ambiguous.
 IDENTITY_HASH="$(security find-identity -p codesigning 2>/dev/null \
@@ -30,3 +32,7 @@ else
 fi
 
 echo "Built $APP"
+
+if [[ "${1:-}" == "--install" ]]; then
+    exec scripts/install-app.sh
+fi

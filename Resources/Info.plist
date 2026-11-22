@@ -8,6 +8,8 @@
     <string>Clutter Buster</string>
     <key>CFBundleExecutable</key>
     <string>ClutterBuster</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.elusivecow.ClutterBuster</string>
     <key>CFBundleName</key>

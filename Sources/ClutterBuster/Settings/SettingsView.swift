@@ -27,6 +27,17 @@ struct SettingsView: View {
                 }
             }
             Section("About") {
+                HStack(spacing: 12) {
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable()
+                        .frame(width: 48, height: 48)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Clutter Buster").font(.headline)
+                        Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "–")")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 LabeledContent("Fences", value: "\(store.fences.count)")
                 LabeledContent("Items", value: "\(store.fences.reduce(0) { $0 + $1.items.count })")
                 Text("Files in fences stay in your Desktop folder. Clutter Buster hides their icons underneath the solid item-count patch in each fence, and quitting puts every icon back where it was.")
