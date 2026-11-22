@@ -56,35 +56,39 @@ private struct ToolbarView: View {
     let currentOrigin: () -> CGPoint
     let onMoveEnded: () -> Void
 
+    @ObservedObject private var themes = ThemeSettings.shared
     @State private var dragStart: (mouse: CGPoint, origin: CGPoint)?
 
     var body: some View {
+        let style = ThemeStyle.chrome(themes.globalTheme)
         HStack(spacing: 8) {
             Image(systemName: "square.grid.2x2.fill")
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(style.titleText.opacity(0.7))
                 .help("Clutter Buster")
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.7))
-                ToolbarSearchField(search: search)
+                    .foregroundStyle(style.titleText.opacity(0.7))
+                ToolbarSearchField(search: search, textColor: NSColor(style.titleText))
                     .frame(height: 16)
             }
             .padding(.horizontal, 10)
             .frame(maxWidth: .infinity)
             .frame(height: 26)
-            .background(Capsule().fill(Color.white.opacity(0.1)))
+            .background(Capsule().fill(style.titleText.opacity(0.1)))
             .contentShape(Capsule())
             .onTapGesture { search.focus() }
-            ToolbarButton(systemImage: "plus", title: "New Fence", action: actions.newFence)
-            ToolbarButton(systemImage: "rectangle.compress.vertical", help: "Collapse all fences", action: actions.collapseAll)
-            ToolbarButton(systemImage: "rectangle.expand.vertical", help: "Expand all fences", action: actions.expandAll)
-            ToolbarButton(systemImage: "gearshape", help: "Settings", action: actions.openSettings)
+            ToolbarButton(systemImage: "plus", title: "New Fence", style: style, action: actions.newFence)
+            ToolbarButton(systemImage: "rectangle.compress.vertical", help: "Collapse all fences", style: style, action: actions.collapseAll)
+            ToolbarButton(systemImage: "rectangle.expand.vertical", help: "Expand all fences", style: style, action: actions.expandAll)
+            ToolbarButton(systemImage: "gearshape", help: "Settings", style: style, action: actions.openSettings)
         }
         .padding(.horizontal, 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Capsule().fill(Color(white: 0.12).opacity(0.94)))
-        .overlay(Capsule().strokeBorder(Color.white.opacity(0.12)))
+        .background(ThemeFillView(fill: style.titleBar).clipShape(Capsule()))
+        .overlay {
+            ThemeBorderView(border: style.border, cornerRadius: 22, live: true, animate: themes.animates)
+        }
         .contentShape(Capsule())
         .gesture(
             DragGesture(minimumDistance: 2)
@@ -106,6 +110,7 @@ private struct ToolbarButton: View {
     let systemImage: String
     var title: String?
     var help: String?
+    let style: ThemeStyle
     let action: () -> Void
 
     var body: some View {
@@ -115,10 +120,10 @@ private struct ToolbarButton: View {
                 if let title { Text(title).lineLimit(1).fixedSize() }
             }
             .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.white)
+            .foregroundStyle(style.titleText)
             .padding(.horizontal, title == nil ? 7 : 10)
             .frame(height: 26)
-            .background(Capsule().fill(Color.white.opacity(0.12)))
+            .background(Capsule().fill(style.titleControl))
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)

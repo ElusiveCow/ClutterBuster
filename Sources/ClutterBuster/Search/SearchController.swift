@@ -163,6 +163,16 @@ final class SearchController: NSObject, NSTextFieldDelegate {
 /// works even though the toolbar sits at desktop level.
 final class ToolbarSearchTextField: NSTextField {
     var onFocus: (() -> Void)?
+    var tint: NSColor = .white {
+        didSet {
+            textColor = tint
+            placeholderAttributedString = NSAttributedString(string: "Search", attributes: [
+                .foregroundColor: tint.withAlphaComponent(0.5),
+                .font: font ?? NSFont.systemFont(ofSize: 12, weight: .medium),
+            ])
+            (currentEditor() as? NSTextView)?.insertionPointColor = tint
+        }
+    }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -175,7 +185,7 @@ final class ToolbarSearchTextField: NSTextField {
     override func becomeFirstResponder() -> Bool {
         let became = super.becomeFirstResponder()
         if became {
-            (currentEditor() as? NSTextView)?.insertionPointColor = .white
+            (currentEditor() as? NSTextView)?.insertionPointColor = tint
             onFocus?()
         }
         return became
@@ -184,23 +194,19 @@ final class ToolbarSearchTextField: NSTextField {
 
 struct ToolbarSearchField: NSViewRepresentable {
     let search: SearchController
+    let textColor: NSColor
 
     func makeNSView(context: Context) -> ToolbarSearchTextField {
         let field = ToolbarSearchTextField()
-        let font = NSFont.systemFont(ofSize: 12, weight: .medium)
         field.isBordered = false
         field.drawsBackground = false
         field.focusRingType = .none
-        field.font = font
-        field.textColor = .white
+        field.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         field.usesSingleLineMode = true
         field.lineBreakMode = .byTruncatingTail
         field.cell?.isScrollable = true
         field.cell?.wraps = false
-        field.placeholderAttributedString = NSAttributedString(string: "Search", attributes: [
-            .foregroundColor: NSColor.white.withAlphaComponent(0.5),
-            .font: font,
-        ])
+        field.tint = textColor
         field.toolTip = "Search fences, the desktop and your Mac"
         field.delegate = search
         field.onFocus = { [weak search] in search?.fieldDidFocus() }
@@ -208,7 +214,9 @@ struct ToolbarSearchField: NSViewRepresentable {
         return field
     }
 
-    func updateNSView(_ field: ToolbarSearchTextField, context: Context) {}
+    func updateNSView(_ field: ToolbarSearchTextField, context: Context) {
+        if field.tint != textColor { field.tint = textColor }
+    }
 }
 
 private struct ContentHeightKey: PreferenceKey {
@@ -222,14 +230,17 @@ private struct SearchResultsView: View {
     let onReveal: (SearchResult) -> Void
     let onContentHeight: (CGFloat) -> Void
 
+    @ObservedObject private var themes = ThemeSettings.shared
+
     var body: some View {
+        let style = ThemeStyle.chrome(themes.globalTheme)
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 0) {
                     if service.results.isEmpty {
                         Text(service.isSearching ? "Searching…" : "No matches")
                             .font(.system(size: 13))
-                            .foregroundStyle(.white.opacity(0.5))
+                            .foregroundStyle(style.bodySecondary)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 8)
                     } else {
@@ -237,12 +248,12 @@ private struct SearchResultsView: View {
                             if index == 0 || service.results[index - 1].section != result.section {
                                 Text(result.section.rawValue.uppercased())
                                     .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(.white.opacity(0.45))
+                                    .foregroundStyle(style.bodySecondary.opacity(0.8))
                                     .padding(.horizontal, 16)
                                     .padding(.top, index == 0 ? 2 : 10)
                                     .padding(.bottom, 4)
                             }
-                            row(result, selected: index == service.selection)
+                            row(result, selected: index == service.selection, style: style)
                                 .id(index)
                                 .onHover { if $0 { service.selection = index } }
                         }
@@ -258,12 +269,12 @@ private struct SearchResultsView: View {
                 if let index { proxy.scrollTo(index) }
             }
         }
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color(white: 0.12)))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.white.opacity(0.12)))
+        .background(RoundedRectangle(cornerRadius: 12).fill(style.plate))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(ThemeBorderView(border: style.border, cornerRadius: 12))
     }
 
-    private func row(_ result: SearchResult, selected: Bool) -> some View {
+    private func row(_ result: SearchResult, selected: Bool, style: ThemeStyle) -> some View {
         HStack(spacing: 10) {
             Image(nsImage: result.icon)
                 .resizable()
@@ -272,11 +283,11 @@ private struct SearchResultsView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(result.name)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(style.bodyText)
                     .lineLimit(1)
                 Text(result.subtitle)
                     .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(style.bodySecondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
@@ -284,9 +295,9 @@ private struct SearchResultsView: View {
             Button { onReveal(result) } label: {
                 Image(systemName: "folder")
                     .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(selected ? 0.9 : 0.55))
+                    .foregroundStyle(style.bodyText.opacity(selected ? 0.9 : 0.55))
                     .frame(width: 28, height: 26)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(selected ? 0.12 : 0)))
+                    .background(RoundedRectangle(cornerRadius: 6).fill(style.bodyText.opacity(selected ? 0.12 : 0)))
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -295,7 +306,7 @@ private struct SearchResultsView: View {
         .padding(.leading, 10)
         .padding(.trailing, 6)
         .padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 8).fill(selected ? Color.accentColor.opacity(0.45) : .clear))
+        .background(RoundedRectangle(cornerRadius: 8).fill(selected ? style.accent.opacity(style.isLight ? 0.25 : 0.45) : .clear))
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
         .onTapGesture { onOpen(result) }
