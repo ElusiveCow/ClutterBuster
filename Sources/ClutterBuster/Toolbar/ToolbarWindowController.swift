@@ -2,7 +2,6 @@ import AppKit
 import SwiftUI
 
 struct ToolbarActions {
-    var search: () -> Void
     var newFence: () -> Void
     var collapseAll: () -> Void
     var expandAll: () -> Void
@@ -16,9 +15,9 @@ final class ToolbarWindowController {
     private let store: FenceStore
     private let size = CGSize(width: 480, height: 44)
 
-    init(store: FenceStore, actions: ToolbarActions) {
+    init(store: FenceStore, search: SearchController, actions: ToolbarActions) {
         self.store = store
-        let view = ToolbarView(actions: actions, onMove: { [weak window] delta, start in
+        let view = ToolbarView(search: search, actions: actions, onMove: { [weak window] delta, start in
             window?.setFrameOrigin(CGPoint(x: start.x + delta.width, y: start.y + delta.height))
         }, currentOrigin: { [weak window] in window?.frame.origin ?? .zero }, onMoveEnded: { [weak store, weak window] in
             store?.toolbarOrigin = window?.frame.origin
@@ -51,6 +50,7 @@ final class ToolbarWindowController {
 }
 
 private struct ToolbarView: View {
+    let search: SearchController
     let actions: ToolbarActions
     let onMove: (CGSize, CGPoint) -> Void
     let currentOrigin: () -> CGPoint
@@ -63,22 +63,19 @@ private struct ToolbarView: View {
             Image(systemName: "square.grid.2x2.fill")
                 .foregroundStyle(.white.opacity(0.7))
                 .help("Clutter Buster")
-            Button(action: actions.search) {
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass")
-                    Text("Search").lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.7))
-                .padding(.horizontal, 10)
-                .frame(maxWidth: .infinity)
-                .frame(height: 26)
-                .background(Capsule().fill(Color.white.opacity(0.1)))
-                .contentShape(Capsule())
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.7))
+                ToolbarSearchField(search: search)
+                    .frame(height: 16)
             }
-            .buttonStyle(.plain)
-            .help("Search fences, the desktop and your Mac")
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity)
+            .frame(height: 26)
+            .background(Capsule().fill(Color.white.opacity(0.1)))
+            .contentShape(Capsule())
+            .onTapGesture { search.focus() }
             ToolbarButton(systemImage: "plus", title: "New Fence", action: actions.newFence)
             ToolbarButton(systemImage: "rectangle.compress.vertical", help: "Collapse all fences", action: actions.collapseAll)
             ToolbarButton(systemImage: "rectangle.expand.vertical", help: "Expand all fences", action: actions.expandAll)

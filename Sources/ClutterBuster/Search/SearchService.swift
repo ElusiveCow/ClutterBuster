@@ -21,9 +21,33 @@ struct SearchResult: Identifiable {
 /// through Spotlight.
 @MainActor
 final class SearchService: ObservableObject {
-    @Published var query = "" { didSet { if query != oldValue { scheduleSearch() } } }
-    @Published private(set) var results: [SearchResult] = []
-    @Published private(set) var isSearchingMac = false
+    @Published var query = "" {
+        didSet {
+            guard query != oldValue else { return }
+            selection = 0
+            scrollTarget = nil
+            scheduleSearch()
+        }
+    }
+    @Published private(set) var results: [SearchResult] = [] {
+        didSet { if selection >= results.count { selection = 0 } }
+    }
+    /// True from the first keystroke until Spotlight finishes gathering.
+    @Published private(set) var isSearching = false
+    /// Index of the highlighted result.
+    @Published var selection = 0
+    /// Set only by the arrow keys, so hovering never scrolls the list under the mouse.
+    @Published private(set) var scrollTarget: Int?
+
+    var selectedResult: SearchResult? {
+        results.indices.contains(selection) ? results[selection] : nil
+    }
+
+    func moveSelection(_ delta: Int) {
+        guard !results.isEmpty else { return }
+        selection = min(max(selection + delta, 0), results.count - 1)
+        scrollTarget = selection
+    }
 
     private let store: FenceStore
     private let macResultLimit = 40
@@ -39,6 +63,7 @@ final class SearchService: ObservableObject {
 
     func reset() {
         query = ""
+        pendingSearch?.cancel()
         stopMacSearch()
         localResults = []
         results = []
@@ -46,6 +71,7 @@ final class SearchService: ObservableObject {
 
     private func scheduleSearch() {
         pendingSearch?.cancel()
+        isSearching = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.search() }
         }
@@ -109,7 +135,7 @@ final class SearchService: ObservableObject {
             })
         }
         metadataQuery = query
-        isSearchingMac = true
+        isSearching = true
         query.start()
     }
 
@@ -118,7 +144,7 @@ final class SearchService: ObservableObject {
         metadataQuery = nil
         observers.forEach(NotificationCenter.default.removeObserver)
         observers = []
-        isSearchingMac = false
+        isSearching = false
     }
 
     private func collectMacResults() {
@@ -143,7 +169,7 @@ final class SearchService: ObservableObject {
             ))
         }
         results = localResults + macResults
-        if query.isGathering == false { isSearchingMac = false }
+        if query.isGathering == false { isSearching = false }
     }
 
     /// Skips system internals, caches and hidden folders so results stay about the user's things.

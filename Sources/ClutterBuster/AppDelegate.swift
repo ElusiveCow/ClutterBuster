@@ -7,7 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let desktop = DesktopIconService()
     private lazy var coordinator = FenceCoordinator(store: store, desktop: desktop)
     private var toolbar: ToolbarWindowController?
-    private var search: SearchPanelController?
+    private var search: SearchController?
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
     private var shownAccessAlert = false
@@ -17,8 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         desktop.onAccessDenied = { [weak self] in self?.showAccessAlert() }
         coordinator.start()
 
-        let toolbar = ToolbarWindowController(store: store, actions: ToolbarActions(
-            search: { [weak self] in self?.openSearch() },
+        let search = SearchController(store: store) { [weak self] in self?.toolbar?.window }
+        self.search = search
+        let toolbar = ToolbarWindowController(store: store, search: search, actions: ToolbarActions(
             newFence: { [weak self] in self?.coordinator.createFence() },
             collapseAll: { [weak self] in self?.coordinator.setAllCollapsed(true) },
             expandAll: { [weak self] in self?.coordinator.setAllCollapsed(false) },
@@ -27,10 +28,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toolbar.show()
         self.toolbar = toolbar
         coordinator.toolbarFrame = { [weak toolbar] in
-            guard let toolbar, toolbar.isVisible else { return nil }
-            return toolbar.window.frame
-        }
-        search = SearchPanelController(store: store) { [weak toolbar] in
             guard let toolbar, toolbar.isVisible else { return nil }
             return toolbar.window.frame
         }
@@ -45,9 +42,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if let demoSearch = UserDefaults.standard.string(forKey: "CBDemoSearch") {
-            search?.closesWhenInactive = false
+            search.closesOnOutsideClick = false
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.search?.show(query: demoSearch)
+                self?.search?.focus(query: demoSearch)
             }
         }
     }
@@ -75,7 +72,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openSearch() {
-        search?.show()
+        toolbar?.show()
+        // Let the status menu finish closing before taking focus.
+        DispatchQueue.main.async { [weak self] in self?.search?.focus() }
     }
 
     @objc private func newFence() {
