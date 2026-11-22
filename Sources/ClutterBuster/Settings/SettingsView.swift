@@ -7,6 +7,7 @@ struct SettingsView: View {
 
     @EnvironmentObject private var store: FenceStore
     @ObservedObject private var themes = ThemeSettings.shared
+    @ObservedObject private var toolbar = ToolbarSettings.shared
     let onQuit: () -> Void
 
     var body: some View {
@@ -55,6 +56,16 @@ struct SettingsView: View {
                 Text("New fences")
             } footer: {
                 Text("Color and opacity apply to the Classic theme.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Section {
+                Toggle("Collapse to bubble", isOn: $toolbar.collapsesToBubble)
+            } header: {
+                Text("Toolbar")
+            } footer: {
+                Text("Drag the toolbar to a screen edge to stand it on its side, or into a corner for a quarter circle. As a bubble it opens when you point at it or click it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)

@@ -6,10 +6,13 @@ final class FenceStore: ObservableObject {
     private struct Layout: Codable {
         var fences: [Fence]
         var toolbarOrigin: CGPoint?
+        var toolbarShape: ToolbarShape?
     }
 
     @Published private(set) var fences: [Fence] = []
+    /// Where the toolbar's full shape sits, even while it's collapsed to a bubble.
     var toolbarOrigin: CGPoint? { didSet { scheduleSave() } }
+    var toolbarShape: ToolbarShape? { didSet { scheduleSave() } }
 
     private let fileURL: URL
     private var saveWork: DispatchWorkItem?
@@ -45,7 +48,7 @@ final class FenceStore: ObservableObject {
     func saveNow() {
         saveWork?.cancel()
         saveWork = nil
-        let layout = Layout(fences: fences, toolbarOrigin: toolbarOrigin)
+        let layout = Layout(fences: fences, toolbarOrigin: toolbarOrigin, toolbarShape: toolbarShape)
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -70,6 +73,7 @@ final class FenceStore: ObservableObject {
             let layout = try JSONDecoder().decode(Layout.self, from: data)
             fences = layout.fences
             toolbarOrigin = layout.toolbarOrigin
+            toolbarShape = layout.toolbarShape
         } catch {
             NSLog("Clutter Buster: failed to read layout: \(error)")
         }

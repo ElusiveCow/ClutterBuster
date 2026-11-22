@@ -68,8 +68,23 @@ final class SearchController: NSObject, NSTextFieldDelegate {
         }
     }
 
+    /// Shows the field before it takes focus, when the toolbar is a bubble or a column.
+    /// Returns true when the field had to appear first.
+    var prepareField: (() -> Bool)?
+    /// Called after the search closes.
+    var onClose: (() -> Void)?
+
     /// Puts the cursor in the toolbar's field, optionally with text already typed.
     func focus(query: String? = nil) {
+        if prepareField?() == true {
+            // The field is made on SwiftUI's next pass.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.focusField(query: query) }
+        } else {
+            focusField(query: query)
+        }
+    }
+
+    private func focusField(query: String?) {
         guard let field, let window = field.window else { return }
         if let query {
             // Set before editing starts; an editor already open would write its old text back.
@@ -92,17 +107,24 @@ final class SearchController: NSObject, NSTextFieldDelegate {
     }
 
     /// True while the field is being edited or the dropdown is showing.
-    private var isOpen: Bool { panel.isVisible || field?.currentEditor() != nil }
+    var isOpen: Bool { panel.isVisible || field?.currentEditor() != nil }
     private var isHeldOpen: Bool { Date() < holdsOpenUntil }
+
+    private var fieldFrame: CGRect? {
+        guard let field, let window = field.window else { return nil }
+        return window.convertToScreen(field.convert(field.bounds, to: nil))
+    }
 
     func close() {
         if isOpen { Log.write("search: closed") }
         outsideClicks.stop()
         panel.orderOut(nil)
         service.reset()
-        guard let field else { return }
-        field.stringValue = ""
-        if field.currentEditor() != nil { field.window?.makeFirstResponder(nil) }
+        if let field {
+            field.stringValue = ""
+            if field.currentEditor() != nil { field.window?.makeFirstResponder(nil) }
+        }
+        onClose?()
     }
 
     private func setQuery(_ text: String) {
@@ -125,12 +147,23 @@ final class SearchController: NSObject, NSTextFieldDelegate {
             panel.orderOut(nil)
             return
         }
-        let anchor = toolbar.frame
+        // A horizontal bar centers the dropdown under itself. A column or a quarter circle hangs
+        // it off the field, reaching toward the middle of the screen.
+        let isBar = toolbar.frame.width >= width * 0.75
+        let anchor = isBar ? toolbar.frame : (fieldFrame ?? toolbar.frame)
         let screen = toolbar.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? anchor
         let height = min(max(contentHeight, 44), maxHeight)
         // Decide with the tallest size so the dropdown doesn't flip sides while results load.
-        let opensBelow = anchor.minY - gap - maxHeight >= screen.minY
-        let x = min(max(anchor.midX - width / 2, screen.minX), screen.maxX - width)
+        let roomBelow = anchor.minY - gap - maxHeight >= screen.minY
+        let roomAbove = anchor.maxY + gap + maxHeight <= screen.maxY
+        let opensBelow = roomBelow && (anchor.midY >= screen.midY || !roomAbove)
+        let preferredX: CGFloat
+        if isBar {
+            preferredX = anchor.midX - width / 2
+        } else {
+            preferredX = anchor.midX < screen.midX ? anchor.minX : anchor.maxX - width
+        }
+        let x = min(max(preferredX, screen.minX), screen.maxX - width)
         let y = opensBelow ? anchor.minY - gap - height : anchor.maxY + gap
         panel.setFrame(CGRect(x: x, y: y, width: width, height: height), display: true)
         if !panel.isVisible { panel.orderFrontRegardless() }
