@@ -15,6 +15,7 @@ final class FenceCoordinator: ObservableObject {
 
     let store: FenceStore
     let desktop: DesktopIconService
+    var toolbarFrame: () -> CGRect? = { nil }
 
     private var controllers: [UUID: FenceWindowController] = [:]
     private var liveFrames: [UUID: CGRect] = [:]
@@ -129,6 +130,28 @@ final class FenceCoordinator: ObservableObject {
         guard let fence = store.fence(id), let item = fence.items.first(where: { $0.id == itemID }) else { return }
         store.update(id) { $0.items.removeAll { $0.id == itemID } }
         desktop.move(restorePositions(for: [item], leaving: fence))
+    }
+
+    /// Called when an item tile is dropped at `point` (Cocoa screen coordinates). Over another
+    /// fence it moves there; over open desktop it leaves the fence and its icon lands under
+    /// the mouse. Anywhere else (its own fence, the toolbar, an app window) nothing changes.
+    func itemDragEnded(_ itemID: UUID, from sourceID: UUID, at point: CGPoint) {
+        guard let source = store.fence(sourceID),
+              let item = source.items.first(where: { $0.id == itemID }),
+              !displayFrame(for: source).contains(point) else { return }
+
+        if let target = store.fences.first(where: { $0.id != sourceID && displayFrame(for: $0).contains(point) }) {
+            addItems([item.url], to: target.id)
+            return
+        }
+
+        if toolbarFrame()?.contains(point) == true || !isDesktopVisible(at: point) { return }
+
+        store.update(sourceID) { $0.items.removeAll { $0.id == itemID } }
+        if item.isOnDesktop {
+            let mainHeight = NSScreen.screens.first?.frame.height ?? 0
+            desktop.move([item.finderName: CGPoint(x: point.x.rounded(), y: (mainHeight - point.y).rounded())])
+        }
     }
 
     func open(_ item: FenceItem) {
@@ -277,6 +300,23 @@ final class FenceCoordinator: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             MainActor.assumeIsolated { self?.restackAll() }
         }
+    }
+
+    /// True when no other app's window (or the Dock or menu bar) covers `point`.
+    private func isDesktopVisible(at point: CGPoint) -> Bool {
+        let mainHeight = NSScreen.screens.first?.frame.height ?? 0
+        let topLeftPoint = CGPoint(x: point.x, y: mainHeight - point.y)
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        for info in windows {
+            guard let layer = info[kCGWindowLayer as String] as? Int, layer >= 0,
+                  (info[kCGWindowOwnerPID as String] as? Int32) != ownPID,
+                  (info[kCGWindowAlpha as String] as? Double ?? 1) > 0,
+                  let boundsInfo = info[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: boundsInfo) else { continue }
+            if bounds.contains(topLeftPoint) { return false }
+        }
+        return true
     }
 
     /// Keeps at least part of each fence's title bar on a screen.

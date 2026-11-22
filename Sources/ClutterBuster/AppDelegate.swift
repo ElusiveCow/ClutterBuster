@@ -23,6 +23,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ))
         toolbar.show()
         self.toolbar = toolbar
+        coordinator.toolbarFrame = { [weak toolbar] in
+            guard let toolbar, toolbar.isVisible else { return nil }
+            return toolbar.window.frame
+        }
         buildStatusItem()
 
         // Ask for Finder access up front rather than on the first drop.

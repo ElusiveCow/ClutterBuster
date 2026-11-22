@@ -63,36 +63,32 @@ struct ItemTile: View {
 
     var body: some View {
         let exists = FileManager.default.fileExists(atPath: item.path)
-        Button {
-            coordinator.open(item)
-        } label: {
-            VStack(spacing: 3) {
-                Image(nsImage: IconCache.icon(for: item.path))
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: metrics.icon, height: metrics.icon)
-                if metrics.showLabels {
-                    Text(item.displayName)
-                        .font(.system(size: metrics.label))
-                        .foregroundStyle(.white)
-                        .lineLimit(2)
-                        .truncationMode(.middle)
-                        .multilineTextAlignment(.center)
-                        .shadow(color: .black.opacity(0.4), radius: 1, y: 1)
-                }
+        VStack(spacing: 3) {
+            Image(nsImage: IconCache.icon(for: item.path))
+                .resizable()
+                .interpolation(.high)
+                .frame(width: metrics.icon, height: metrics.icon)
+            if metrics.showLabels {
+                Text(item.displayName)
+                    .font(.system(size: metrics.label))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .multilineTextAlignment(.center)
+                    .shadow(color: .black.opacity(0.4), radius: 1, y: 1)
             }
-            .frame(width: metrics.cell)
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
-            .opacity(exists ? 1 : 0.35)
         }
-        .buttonStyle(.plain)
-        .help(exists ? item.displayName : "\(item.displayName) can't be found")
-        .contextMenu {
-            Button("Open") { coordinator.open(item) }
-            Button("Show in Finder") { coordinator.revealInFinder(item) }
-            Divider()
-            Button("Remove from Fence") { coordinator.removeItem(item.id, from: fenceID) }
+        .frame(width: metrics.cell)
+        .padding(.vertical, 4)
+        .opacity(exists ? 1 : 0.35)
+        .overlay {
+            ItemDragSource(
+                item: item,
+                fenceID: fenceID,
+                iconSize: metrics.icon,
+                toolTip: exists ? item.displayName : "\(item.displayName) can't be found",
+                coordinator: coordinator
+            )
         }
     }
 }
