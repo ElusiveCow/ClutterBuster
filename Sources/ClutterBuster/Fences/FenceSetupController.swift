@@ -16,7 +16,7 @@ private final class SetupPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 }
 
-/// Floats a newly created fence above app windows with a card for its name, color,
+/// Floats a newly created fence above app windows with a card for its name, theme, color,
 /// transparency and icons per row. Finishing settles the fence back to desktop level.
 @MainActor
 final class FenceSetupController {
@@ -94,6 +94,7 @@ private struct FenceSetupCard: View {
 
     @EnvironmentObject private var store: FenceStore
     @EnvironmentObject private var coordinator: FenceCoordinator
+    @ObservedObject private var themes = ThemeSettings.shared
     @State private var name = ""
     @FocusState private var nameFocused: Bool
 
@@ -125,28 +126,48 @@ private struct FenceSetupCard: View {
                 .onSubmit(onDone)
                 .onChange(of: name) { _, newName in coordinator.rename(fenceID, to: newName) }
 
-            section("Color") {
-                HStack(spacing: 8) {
-                    ForEach(FenceColor.allCases) { color in
-                        Button { coordinator.setColor(fenceID, color) } label: {
-                            Circle()
-                                .fill(Color(nsColor: color.body))
-                                .frame(width: 22, height: 22)
-                                .overlay(Circle().strokeBorder(Color.white.opacity(color == fence.color ? 0.95 : 0.15), lineWidth: color == fence.color ? 2 : 1))
-                                .contentShape(Circle())
+            section(fence.theme.map { "Theme \u{00B7} \($0.name)" } ?? "Theme \u{00B7} Global (\(themes.globalTheme.name))") {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(36), spacing: 2), count: 7), alignment: .leading, spacing: 4) {
+                    ThemeSwatch(
+                        style: ThemeStyle.of(themes.globalTheme, for: fence),
+                        selected: fence.theme == nil,
+                        badge: "globe"
+                    ) { coordinator.setTheme(fenceID, nil) }
+                        .help("Use Global (\(themes.globalTheme.name))")
+                    ForEach(FenceTheme.allCases) { theme in
+                        ThemeSwatch(style: ThemeStyle.of(theme, for: fence), selected: fence.theme == theme) {
+                            coordinator.setTheme(fenceID, theme)
                         }
-                        .buttonStyle(.plain)
-                        .help(color.name)
+                            .help(theme.name)
                     }
                 }
             }
 
-            section("Transparency") {
-                let current = OpacityPreset.nearest(to: fence.opacity)
-                HStack(spacing: 5) {
-                    ForEach(OpacityPreset.allCases) { preset in
-                        Chip(title: preset.name, selected: preset == current) {
-                            coordinator.setOpacity(fenceID, preset.value)
+            // Other themes set their own colors and transparency.
+            if (fence.theme ?? themes.globalTheme) == .classic {
+                section("Color") {
+                    HStack(spacing: 8) {
+                        ForEach(FenceColor.allCases) { color in
+                            Button { coordinator.setColor(fenceID, color) } label: {
+                                Circle()
+                                    .fill(Color(nsColor: color.body))
+                                    .frame(width: 22, height: 22)
+                                    .overlay(Circle().strokeBorder(Color.white.opacity(color == fence.color ? 0.95 : 0.15), lineWidth: color == fence.color ? 2 : 1))
+                                    .contentShape(Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .help(color.name)
+                        }
+                    }
+                }
+
+                section("Transparency") {
+                    let current = OpacityPreset.nearest(to: fence.opacity)
+                    HStack(spacing: 5) {
+                        ForEach(OpacityPreset.allCases) { preset in
+                            Chip(title: preset.name, selected: preset == current) {
+                                coordinator.setOpacity(fenceID, preset.value)
+                            }
                         }
                     }
                 }
@@ -189,6 +210,34 @@ private struct FenceSetupCard: View {
                 .foregroundStyle(.white.opacity(0.6))
             content()
         }
+    }
+}
+
+private struct ThemeSwatch: View {
+    let style: ThemeStyle
+    let selected: Bool
+    var badge: String?
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ThemePreview(style: style)
+                .frame(width: 32, height: 24)
+                .overlay(alignment: .bottomLeading) {
+                    if let badge {
+                        Image(systemName: badge)
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(2)
+                            .background(Circle().fill(Color.black.opacity(0.6)))
+                            .offset(x: -3, y: 3)
+                    }
+                }
+                .padding(2)
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 2))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

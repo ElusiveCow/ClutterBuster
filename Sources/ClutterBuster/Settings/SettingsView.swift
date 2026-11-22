@@ -6,11 +6,37 @@ struct SettingsView: View {
     @AppStorage(AppSettings.defaultOpacityKey) private var defaultOpacity = 1.0
 
     @EnvironmentObject private var store: FenceStore
+    @ObservedObject private var themes = ThemeSettings.shared
     let onQuit: () -> Void
 
     var body: some View {
         Form {
-            Section("New fences") {
+            Section {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 6), spacing: 10) {
+                    ForEach(FenceTheme.allCases) { theme in
+                        ThemeGalleryItem(
+                            theme: theme,
+                            style: theme == .classic ? .classic(color: defaultColor, opacity: defaultOpacity) : theme.style,
+                            selected: themes.globalTheme == theme
+                        ) { themes.globalTheme = theme }
+                    }
+                }
+                .padding(.vertical, 4)
+                Toggle("Animate themes", isOn: $themes.animateThemes)
+                if themes.animateThemes && !themes.motionAllowed {
+                    Text("Paused while Reduce Motion or Low Power Mode is on.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Theme")
+            } footer: {
+                Text("Every fence uses this theme unless you pick another one from its \u{22EF} menu. The toolbar and search follow it too.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Section {
                 Picker("Color", selection: $defaultColor) {
                     ForEach(FenceColor.allCases) { color in
                         Text(color.name).tag(color)
@@ -25,6 +51,13 @@ struct SettingsView: View {
                             .frame(width: 44, alignment: .trailing)
                     }
                 }
+            } header: {
+                Text("New fences")
+            } footer: {
+                Text("Color and opacity apply to the Classic theme.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             Section("About") {
                 HStack(spacing: 12) {
@@ -40,7 +73,7 @@ struct SettingsView: View {
                 }
                 LabeledContent("Fences", value: "\(store.fences.count)")
                 LabeledContent("Items", value: "\(store.fences.reduce(0) { $0 + $1.items.count })")
-                Text("Files in fences stay in your Desktop folder. Clutter Buster hides their icons underneath the solid item-count patch in each fence, and quitting puts every icon back where it was.")
+                Text("Files in fences stay in your Desktop folder. Clutter Buster hides their icons underneath the bottom-right corner of each fence, and quitting puts every icon back where it was.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -49,7 +82,33 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420)
+        .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct ThemeGalleryItem: View {
+    let theme: FenceTheme
+    let style: ThemeStyle
+    let selected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                ThemePreview(style: style)
+                    .aspectRatio(1.4, contentMode: .fit)
+                    .padding(3)
+                    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 2.5))
+                Text(theme.name)
+                    .font(.caption)
+                    .fontWeight(selected ? .semibold : .regular)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(theme.name)
     }
 }
