@@ -26,6 +26,8 @@ struct FenceItem: Codable, Identifiable {
     /// Finder position the icon had before it was hidden. Nil for items that aren't on the Desktop.
     var originalDesktopPosition: CGPoint?
     var addedAt = Date()
+    /// The tab the item is shown in. Older layouts lack it; `Fence` assigns the first tab.
+    var tabID: UUID?
 
     var url: URL { URL(fileURLWithPath: path) }
     var displayName: String { FileManager.default.displayName(atPath: path) }
@@ -45,7 +47,30 @@ struct Fence: Codable, Identifiable {
     /// Opacity of the fence background, 0 (clear) to 1 (solid). The patch that hides the
     /// real desktop icons is always solid.
     var opacity: Double = 1
+    /// In manual order: the order items appear in when their tab is sorted manually.
     var items: [FenceItem] = []
+    /// Never empty.
+    var tabs: [FenceTab] = [FenceTab(name: FenceTab.defaultName)]
+    var selectedTabID: UUID?
+
+    /// The tab currently shown, falling back to the first tab.
+    var currentTab: FenceTab {
+        tabs.first { $0.id == selectedTabID } ?? tabs[0]
+    }
+
+    func items(in tabID: UUID) -> [FenceItem] {
+        items.filter { $0.tabID == tabID }
+    }
+
+    /// Makes sure there's at least one tab and every item belongs to an existing tab.
+    mutating func normalizeTabs() {
+        if tabs.isEmpty { tabs = [FenceTab(name: FenceTab.defaultName)] }
+        let tabIDs = Set(tabs.map(\.id))
+        for index in items.indices where items[index].tabID.map(tabIDs.contains) != true {
+            items[index].tabID = tabs[0].id
+        }
+        if let selectedTabID, !tabIDs.contains(selectedTabID) { self.selectedTabID = nil }
+    }
 }
 
 extension Fence {
@@ -60,6 +85,58 @@ extension Fence {
         iconsPerRow = try container.decodeIfPresent(Int.self, forKey: .iconsPerRow) ?? 4
         opacity = try container.decodeIfPresent(Double.self, forKey: .opacity) ?? 1
         items = try container.decodeIfPresent([FenceItem].self, forKey: .items) ?? []
+        tabs = try container.decodeIfPresent([FenceTab].self, forKey: .tabs) ?? []
+        selectedTabID = try container.decodeIfPresent(UUID.self, forKey: .selectedTabID)
+        normalizeTabs()
+    }
+}
+
+struct FenceTab: Codable, Identifiable, Equatable {
+    static let defaultName = "General"
+
+    var id = UUID()
+    var name: String
+    var sort = TabSort()
+
+    init(name: String) {
+        self.name = name
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? Self.defaultName
+        sort = try container.decodeIfPresent(TabSort.self, forKey: .sort) ?? TabSort()
+    }
+}
+
+enum SortKey: String, Codable, CaseIterable, Identifiable {
+    case manual, name, kind, dateAdded, dateModified, size
+
+    var id: Self { self }
+
+    var name: String {
+        switch self {
+        case .manual: "Manual"
+        case .name: "Name"
+        case .kind: "Kind"
+        case .dateAdded: "Date Added"
+        case .dateModified: "Date Modified"
+        case .size: "Size"
+        }
+    }
+}
+
+struct TabSort: Codable, Equatable {
+    var key: SortKey = .manual
+    var ascending = true
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        key = (try? container.decodeIfPresent(SortKey.self, forKey: .key)) ?? .manual
+        ascending = try container.decodeIfPresent(Bool.self, forKey: .ascending) ?? true
     }
 }
 

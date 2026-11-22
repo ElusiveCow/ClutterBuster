@@ -96,7 +96,7 @@ final class SearchService: ObservableObject {
                 guard item.displayName.localizedCaseInsensitiveContains(text) else { continue }
                 fenceResults.append(SearchResult(
                     section: .fences, url: item.url, name: item.displayName,
-                    subtitle: "In fence \u{201C}\(fence.title)\u{201D}",
+                    subtitle: "In fence \u{201C}\(fence.title)\u{201D} \u{203A} \(fence.tabs.first { $0.id == item.tabID }?.name ?? fence.tabs[0].name)",
                     icon: NSWorkspace.shared.icon(forFile: item.path)
                 ))
             }

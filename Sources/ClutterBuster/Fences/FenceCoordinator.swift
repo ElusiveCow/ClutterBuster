@@ -39,9 +39,16 @@ final class FenceCoordinator: ObservableObject {
 
     var collapsedHeight: CGFloat { Self.titleHeight + patchSize.height + Self.patchInset * 2 }
 
+    static let tabBarHeight: CGFloat = 26
+
     var minimumSize: CGSize {
-        CGSize(width: max(patchSize.width + Self.patchInset * 2, 180), height: collapsedHeight)
+        CGSize(width: max(patchSize.width + Self.patchInset * 2, 180), height: collapsedHeight + Self.tabBarHeight)
     }
+
+    /// Where each fence's tabs and visible tiles are, in window content coordinates (top-left
+    /// origin), so drops can be matched to a tab or a position in the grid.
+    var tabFrames: [UUID: [UUID: CGRect]] = [:]
+    var tileFrames: [UUID: [UUID: CGRect]] = [:]
 
     func start() {
         let minimum = minimumSize
@@ -124,6 +131,8 @@ final class FenceCoordinator: ObservableObject {
         if setup?.fenceID == id { setup?.finish() }
         desktop.move(restorePositions(for: fence.items, leaving: fence))
         controllers.removeValue(forKey: id)?.close()
+        tabFrames[id] = nil
+        tileFrames[id] = nil
         store.remove(id)
     }
 
@@ -165,8 +174,11 @@ final class FenceCoordinator: ObservableObject {
 
     // MARK: Items
 
-    func addItems(_ urls: [URL], to id: UUID) {
-        guard store.fence(id) != nil else { return }
+    /// Adds items to a tab of a fence (its selected tab by default), taking them out of any
+    /// other fence.
+    func addItems(_ urls: [URL], to id: UUID, tab: UUID? = nil) {
+        guard let fence = store.fence(id) else { return }
+        let tabID = tab ?? fence.currentTab.id
         let positions = desktop.positionsNow() ?? [:]
         for url in urls {
             let path = url.standardizedFileURL.path
@@ -180,9 +192,93 @@ final class FenceCoordinator: ObservableObject {
             let original = DesktopIconService.isOnDesktop(url)
                 ? (originalFromOtherFence ?? positions[url.lastPathComponent])
                 : nil
-            store.update(id) { $0.items.append(FenceItem(path: path, originalDesktopPosition: original)) }
+            store.update(id) { $0.items.append(FenceItem(path: path, originalDesktopPosition: original, tabID: tabID)) }
         }
         restack(id)
+    }
+
+    // MARK: Tabs
+
+    func selectTab(_ id: UUID, _ tabID: UUID) {
+        store.update(id) { $0.selectedTabID = tabID }
+    }
+
+    /// Adds a tab after the last one, selects it and returns its ID.
+    @discardableResult
+    func addTab(_ id: UUID) -> UUID? {
+        guard let fence = store.fence(id) else { return nil }
+        let names = Set(fence.tabs.map(\.name))
+        var number = fence.tabs.count + 1
+        while names.contains("Tab \(number)") { number += 1 }
+        let tab = FenceTab(name: "Tab \(number)")
+        store.update(id) { fence in
+            fence.tabs.append(tab)
+            fence.selectedTabID = tab.id
+        }
+        return tab.id
+    }
+
+    func renameTab(_ id: UUID, _ tabID: UUID, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        store.update(id) { fence in
+            guard let index = fence.tabs.firstIndex(where: { $0.id == tabID }) else { return }
+            fence.tabs[index].name = trimmed
+        }
+    }
+
+    /// Removes a tab and moves its items into the first remaining tab. The last tab stays.
+    func deleteTab(_ id: UUID, _ tabID: UUID) {
+        store.update(id) { fence in
+            guard fence.tabs.count > 1 else { return }
+            fence.tabs.removeAll { $0.id == tabID }
+            let destination = fence.tabs[0].id
+            for index in fence.items.indices where fence.items[index].tabID == tabID {
+                fence.items[index].tabID = destination
+            }
+            if fence.selectedTabID == tabID { fence.selectedTabID = destination }
+        }
+    }
+
+    func setSort(_ id: UUID, _ tabID: UUID, _ sort: TabSort) {
+        FileInfoCache.shared.invalidate()
+        store.update(id) { fence in
+            guard let index = fence.tabs.firstIndex(where: { $0.id == tabID }) else { return }
+            fence.tabs[index].sort = sort
+        }
+    }
+
+    /// Items of a tab in the order they're shown.
+    func displayedItems(_ fence: Fence, tab: FenceTab) -> [FenceItem] {
+        tab.sort.apply(to: fence.items(in: tab.id))
+    }
+
+    func moveItem(_ itemID: UUID, in id: UUID, toTab tabID: UUID) {
+        store.update(id) { fence in
+            guard let index = fence.items.firstIndex(where: { $0.id == itemID }) else { return }
+            var item = fence.items.remove(at: index)
+            item.tabID = tabID
+            fence.items.append(item)
+        }
+    }
+
+    /// Moves an item next to another in its tab's displayed order and switches the tab to
+    /// manual sorting so the order sticks.
+    func reorder(_ itemID: UUID, in id: UUID, nextTo targetID: UUID, after: Bool) {
+        guard itemID != targetID, let fence = store.fence(id),
+              let item = fence.items.first(where: { $0.id == itemID }),
+              let tab = fence.tabs.first(where: { $0.id == item.tabID }) else { return }
+        var order = displayedItems(fence, tab: tab)
+        order.removeAll { $0.id == itemID }
+        guard let targetIndex = order.firstIndex(where: { $0.id == targetID }) else { return }
+        order.insert(item, at: after ? targetIndex + 1 : targetIndex)
+        store.update(id) { fence in
+            var remaining = order.makeIterator()
+            fence.items = fence.items.map { $0.tabID == tab.id ? (remaining.next() ?? $0) : $0 }
+            if let index = fence.tabs.firstIndex(where: { $0.id == tab.id }) {
+                fence.tabs[index].sort = TabSort()
+            }
+        }
     }
 
     func removeItem(_ itemID: UUID, from id: UUID) {
@@ -204,13 +300,26 @@ final class FenceCoordinator: ObservableObject {
         Log.write("drag end: \"\(name)\" from \"\(source.title)\" at \(point) operation=\(operation.rawValue)")
 
         if displayFrame(for: source).contains(point) {
-            Log.write("  decision: dropped on its own fence, no change")
+            if let tab = tab(at: point, in: source) {
+                if tab.id != item.tabID {
+                    Log.write("  decision: move to tab \"\(tab.name)\"")
+                    moveItem(itemID, in: sourceID, toTab: tab.id)
+                } else {
+                    Log.write("  decision: dropped on its own tab, no change")
+                }
+            } else if let (targetID, after) = tile(at: point, in: source), targetID != itemID {
+                Log.write("  decision: reorder \(after ? "after" : "before") another item")
+                reorder(itemID, in: sourceID, nextTo: targetID, after: after)
+            } else {
+                Log.write("  decision: dropped on its own fence, no change")
+            }
             return
         }
 
         if let target = store.fences.first(where: { $0.id != sourceID && displayFrame(for: $0).contains(point) }) {
-            Log.write("  decision: move to fence \"\(target.title)\"")
-            addItems([item.url], to: target.id)
+            let tab = tab(at: point, in: target)
+            Log.write("  decision: move to fence \"\(target.title)\"\(tab.map { ", tab \"\($0.name)\"" } ?? "")")
+            addItems([item.url], to: target.id, tab: tab?.id)
             return
         }
 
@@ -390,6 +499,31 @@ final class FenceCoordinator: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             MainActor.assumeIsolated { self?.restackAll() }
         }
+    }
+
+    /// Converts a rect in a fence window's content coordinates (top-left origin) to the screen.
+    private func screenRect(_ rect: CGRect, in id: UUID) -> CGRect? {
+        guard let window = controllers[id]?.window else { return nil }
+        return CGRect(x: window.frame.minX + rect.minX, y: window.frame.maxY - rect.maxY, width: rect.width, height: rect.height)
+    }
+
+    /// The tab whose name is under `point`, if the fence is showing its tabs.
+    private func tab(at point: CGPoint, in fence: Fence) -> FenceTab? {
+        guard !fence.isCollapsed, let frames = tabFrames[fence.id] else { return nil }
+        return fence.tabs.first { tab in
+            frames[tab.id].flatMap { screenRect($0, in: fence.id) }?.contains(point) == true
+        }
+    }
+
+    /// The visible tile under `point` and whether the point is on its trailing half.
+    private func tile(at point: CGPoint, in fence: Fence) -> (UUID, Bool)? {
+        guard !fence.isCollapsed, let frames = tileFrames[fence.id] else { return nil }
+        let visible = Set(fence.items(in: fence.currentTab.id).map(\.id))
+        for (itemID, rect) in frames where visible.contains(itemID) {
+            guard let screen = screenRect(rect, in: fence.id), screen.contains(point) else { continue }
+            return (itemID, point.x > screen.midX)
+        }
+        return nil
     }
 
     /// Nearest Finder position to `target` where an icon won't overlap another visible desktop

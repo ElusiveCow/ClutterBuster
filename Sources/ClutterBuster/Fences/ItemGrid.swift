@@ -22,13 +22,17 @@ struct GridMetrics {
 
 struct ItemGrid: View {
     let fence: Fence
+    /// The selected tab's items, in display order.
+    let items: [FenceItem]
     /// Extra scrollable space below the last row so no tile stays stuck under the solid patch.
     let bottomInset: CGFloat
+
+    @EnvironmentObject private var coordinator: FenceCoordinator
 
     var body: some View {
         GeometryReader { geo in
             let metrics = GridMetrics(width: geo.size.width, columns: fence.iconsPerRow)
-            if fence.items.isEmpty {
+            if items.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "tray.and.arrow.down")
                         .font(.system(size: 22))
@@ -44,8 +48,11 @@ struct ItemGrid: View {
                         columns: Array(repeating: GridItem(.fixed(metrics.cell), spacing: 0), count: metrics.columns),
                         spacing: 4
                     ) {
-                        ForEach(fence.items) { item in
+                        ForEach(items) { item in
                             ItemTile(item: item, fenceID: fence.id, metrics: metrics)
+                                .background(GeometryReader { tile in
+                                    Color.clear.preference(key: TileFramesKey.self, value: [item.id: tile.frame(in: .global)])
+                                })
                         }
                     }
                     .padding(.horizontal, GridMetrics.padding)
@@ -53,6 +60,7 @@ struct ItemGrid: View {
                     .padding(.bottom, bottomInset + 8)
                 }
                 .scrollIndicators(.automatic)
+                .onPreferenceChange(TileFramesKey.self) { coordinator.tileFrames[fence.id] = $0 }
             }
         }
     }
