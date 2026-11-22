@@ -65,6 +65,25 @@ final class FenceCoordinator: ObservableObject {
         return fence.id
     }
 
+    func confirmDelete(_ id: UUID) {
+        // Let the menu that triggered this finish closing before the alert takes over.
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, let fence = self.store.fence(id) else { return }
+                let alert = NSAlert()
+                alert.messageText = "Delete \"\(fence.title)\"?"
+                alert.informativeText = "Its icons will go back to the desktop. Your files aren't affected."
+                let delete = alert.addButton(withTitle: "Delete")
+                delete.hasDestructiveAction = true
+                alert.addButton(withTitle: "Cancel")
+                NSApp.activate(ignoringOtherApps: true)
+                if alert.runModal() == .alertFirstButtonReturn {
+                    self.deleteFence(id)
+                }
+            }
+        }
+    }
+
     func deleteFence(_ id: UUID) {
         guard let fence = store.fence(id) else { return }
         desktop.move(restorePositions(for: fence.items, leaving: fence))

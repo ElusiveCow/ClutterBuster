@@ -52,13 +52,30 @@ struct FenceView: View {
                     .onChange(of: titleFocused) { _, focused in
                         if !focused { commitRename() }
                     }
+                    .padding(.horizontal, 34)
             } else {
                 Text(fence.title)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.horizontal, 34)
             }
             HStack {
+                Menu {
+                    FenceMenu(fence: fence, onRename: { startRename(fence) })
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.8))
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Fence options")
                 Spacer()
                 Button {
                     coordinator.toggleCollapse(fenceID)
@@ -72,9 +89,8 @@ struct FenceView: View {
                 .buttonStyle(.plain)
                 .help(fence.isCollapsed ? "Expand" : "Collapse")
             }
-            .padding(.trailing, 6)
+            .padding(.horizontal, 6)
         }
-        .padding(.horizontal, 32)
         .frame(maxWidth: .infinity)
         .frame(height: FenceCoordinator.titleHeight)
         .background(Color(nsColor: fence.color.titleBar))
@@ -156,6 +172,6 @@ struct FenceMenu: View {
         }
         Button(fence.isCollapsed ? "Expand" : "Collapse") { coordinator.toggleCollapse(fence.id) }
         Divider()
-        Button("Delete Fence (icons go back to the desktop)", role: .destructive) { coordinator.deleteFence(fence.id) }
+        Button("Delete Fence…", role: .destructive) { coordinator.confirmDelete(fence.id) }
     }
 }
