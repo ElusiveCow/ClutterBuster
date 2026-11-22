@@ -39,14 +39,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Ask for Finder access up front rather than on the first drop.
         _ = desktop.positionsNow()
 
-        if let demoSearch = UserDefaults.standard.string(forKey: "CBDemoSearch") {
-            search?.closesWhenInactive = false
-            search?.show(query: demoSearch)
-        }
-
         if let demoPath = UserDefaults.standard.string(forKey: "CBDemoPath") {
             let id = coordinator.createFence(title: "Demo")
             coordinator.addItems([URL(fileURLWithPath: demoPath)], to: id)
+        }
+
+        if let demoSearch = UserDefaults.standard.string(forKey: "CBDemoSearch") {
+            search?.closesWhenInactive = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.search?.show(query: demoSearch)
+            }
         }
     }
 

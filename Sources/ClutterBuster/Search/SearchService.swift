@@ -21,12 +21,7 @@ struct SearchResult: Identifiable {
 /// through Spotlight.
 @MainActor
 final class SearchService: ObservableObject {
-    @Published var query = "" {
-        didSet {
-            Log.write("search query \"\(oldValue)\" -> \"\(query)\"")
-            scheduleSearch()
-        }
-    }
+    @Published var query = "" { didSet { if query != oldValue { scheduleSearch() } } }
     @Published private(set) var results: [SearchResult] = []
     @Published private(set) var isSearchingMac = false
 

@@ -42,13 +42,15 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
         let opensBelow = anchorFrame.minY - size.height - 8 >= screen.minY
         let x = min(max(anchorFrame.midX - size.width / 2, screen.minX), screen.maxX - size.width)
         let y = opensBelow ? anchorFrame.minY - size.height - 8 : anchorFrame.maxY + 8
-        panel.setFrame(CGRect(x: x, y: y, width: size.width, height: size.height), display: false)
-
         let view = SearchView(service: service, opensBelow: opensBelow, onOpen: { [weak self] result in
             NSWorkspace.shared.open(result.url)
             self?.close()
         }, onClose: { [weak self] in self?.close() })
-        panel.contentView = NSHostingView(rootView: view)
+        let host = NSHostingView(rootView: view)
+        // Otherwise the hosting view shrinks the panel to the card's ideal size and shifts it.
+        host.sizingOptions = []
+        panel.contentView = host
+        panel.setFrame(CGRect(x: x, y: y, width: size.width, height: size.height), display: true)
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
     }
