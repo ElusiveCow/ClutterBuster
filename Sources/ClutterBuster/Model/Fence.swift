@@ -61,6 +61,8 @@ struct Fence: Codable, Identifiable {
     var tabsCollapsed = false
     /// Scales all of the fence's text together: title, tabs, sort button and item labels.
     var textScale: Double = 1
+    /// Overrides the theme's title font, size, weight, alignment and color.
+    var titleStyle = TitleStyle()
 
     static let textScaleRange = 0.8...1.8
     static let textScaleStep = 0.1
@@ -109,6 +111,7 @@ extension Fence {
         tabRows = max(1, try container.decodeIfPresent(Int.self, forKey: .tabRows) ?? 1)
         tabsCollapsed = try container.decodeIfPresent(Bool.self, forKey: .tabsCollapsed) ?? false
         textScale = Self.clampedTextScale(try container.decodeIfPresent(Double.self, forKey: .textScale) ?? 1)
+        titleStyle = (try? container.decodeIfPresent(TitleStyle.self, forKey: .titleStyle)) ?? TitleStyle()
         normalizeTabs()
     }
 }

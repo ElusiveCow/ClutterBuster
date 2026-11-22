@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// A fence's settings, changed live: name, theme, Classic's color and transparency, and
-/// icons per row. With `showsMore`, also text size and the tab strip. Drawn light on dark,
+/// icons per row. With `showsMore`, also text size, title style and the tab strip. Drawn light on dark,
 /// for the setup card and the settings popover.
 struct FenceSettingsForm: View {
     let fenceID: UUID
@@ -95,6 +95,9 @@ struct FenceSettingsForm: View {
 
             if showsMore {
                 textSizeSection(fence)
+                SettingsSection("Title style") {
+                    TitleStyleEditor(fenceID: fenceID)
+                }
                 tabsSection(fence)
             }
         }
@@ -220,17 +223,173 @@ struct Chip: View {
     }
 }
 
-/// Everything about one fence in a popover, opened from its gear or ⋯ menu.
-struct FenceSettingsPopover: View {
+/// The font, size, weight, alignment and color of a fence's title. Each starts at the
+/// theme's default, and picking the default again goes back to following the theme.
+struct TitleStyleEditor: View {
     let fenceID: UUID
 
+    @EnvironmentObject private var store: FenceStore
+    @EnvironmentObject private var coordinator: FenceCoordinator
+    @ObservedObject private var themes = ThemeSettings.shared
+
     var body: some View {
-        FenceSettingsForm(fenceID: fenceID, showsMore: true)
-            .padding(14)
-            .frame(width: 300)
-            .fixedSize(horizontal: false, vertical: true)
-            // Darkens the see-through popover so the light controls read over any desktop.
-            .background(Color.black.opacity(0.45))
+        if let fence = store.fence(fenceID) {
+            let theme = ThemeStyle.resolve(fence, global: themes.globalTheme)
+            let style = fence.titleStyle
+            let size = style.pointSize
+            let weight = style.weight ?? theme.titleWeight
+            VStack(alignment: .leading, spacing: 8) {
+                fontMenu(style, theme: theme)
+                HStack(spacing: 5) {
+                    Chip(systemImage: "minus", selected: false) { update { $0.size = sizeValue(size - 1) } }
+                        .disabled(size <= TitleStyle.sizeRange.lowerBound)
+                        .help("Smaller title")
+                    Text("\(Int(size)) pt")
+                        .font(.system(size: 11, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.85))
+                        .frame(minWidth: 36)
+                    Chip(systemImage: "plus", selected: false) { update { $0.size = sizeValue(size + 1) } }
+                        .disabled(size >= TitleStyle.sizeRange.upperBound)
+                        .help("Bigger title")
+                    Spacer(minLength: 8)
+                    Chip(systemImage: "text.alignleft", selected: style.alignment == .leading) { update { $0.alignment = .leading } }
+                        .help("Title on the left")
+                    Chip(systemImage: "text.aligncenter", selected: style.alignment != .leading) { update { $0.alignment = nil } }
+                        .help("Title in the middle")
+                }
+                HStack(spacing: 5) {
+                    ForEach(TitleWeight.allCases) { option in
+                        Chip(title: option.name, selected: option == weight) {
+                            update { $0.weight = option == theme.titleWeight ? nil : option }
+                        }
+                    }
+                }
+                HStack(spacing: 5) {
+                    Chip(title: "Theme Color", selected: style.color == nil) { update { $0.color = nil } }
+                    ColorPicker("Title color", selection: colorBinding(style, theme: theme), supportsOpacity: false)
+                        .labelsHidden()
+                        .help("Pick a title color")
+                    Spacer(minLength: 0)
+                    Chip(title: "Reset", selected: false) { coordinator.setTitleStyle(fenceID, TitleStyle()) }
+                        .disabled(style.isDefault)
+                        .help("Use the theme's title style")
+                }
+            }
+        }
+    }
+
+    private func fontMenu(_ style: TitleStyle, theme: ThemeStyle) -> some View {
+        let themeFont = TitleFont(design: theme.titleDesign)
+        return Menu {
+            Button {
+                update { $0.font = nil }
+            } label: {
+                let title = "Theme Default (\(themeFont.name))"
+                if style.font == nil { Label(title, systemImage: "checkmark") } else { Text(title) }
+            }
+            Divider()
+            ForEach(TitleFont.builtIn, id: \.self) { font in
+                Button {
+                    update { $0.font = font }
+                } label: {
+                    if style.font == font { Label(font.name, systemImage: "checkmark") } else { Text(font.name) }
+                }
+            }
+            Divider()
+            InstalledFontsMenu(selected: style.font) { family in update { $0.font = .family(family) } }
+                .equatable()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "textformat")
+                    .font(.system(size: 10, weight: .semibold))
+                Text(style.font?.name ?? "\(themeFont.name) (Theme)")
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.white.opacity(0.85))
+            .padding(.horizontal, 9)
+            .frame(height: 22)
+            .background(Capsule().fill(Color.white.opacity(0.1)))
+            .contentShape(Capsule())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Title font")
+    }
+
+    private func colorBinding(_ style: TitleStyle, theme: ThemeStyle) -> Binding<Color> {
+        Binding(
+            get: { style.color.flatMap { Color(rgbHex: $0) } ?? theme.titleText },
+            set: { color in update { $0.color = color.rgbHex } }
+        )
+    }
+
+    /// Nil at the theme's size, so the title follows the theme again.
+    private func sizeValue(_ size: Double) -> Double? {
+        let size = min(max(size, TitleStyle.sizeRange.lowerBound), TitleStyle.sizeRange.upperBound)
+        return size == TitleStyle.defaultSize ? nil : size
+    }
+
+    /// Changes the stored style, not the one this view last drew, so quick changes from the
+    /// color panel don't undo each other.
+    private func update(_ change: (inout TitleStyle) -> Void) {
+        guard var style = store.fence(fenceID)?.titleStyle else { return }
+        change(&style)
+        coordinator.setTitleStyle(fenceID, style)
+    }
+}
+
+/// Every installed font family, in a submenu. Only redrawn when the selection changes, since
+/// there can be hundreds.
+private struct InstalledFontsMenu: View, Equatable {
+    let selected: TitleFont?
+    let onPick: (String) -> Void
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.selected == rhs.selected }
+
+    var body: some View {
+        Menu("Installed Fonts") {
+            ForEach(TitleFont.installedFamilies, id: \.self) { family in
+                Button {
+                    onPick(family)
+                } label: {
+                    if selected == .family(family) { Label(family, systemImage: "checkmark") } else { Text(family) }
+                }
+            }
+        }
+    }
+}
+
+enum FenceSettingsPage: String {
+    case all, titleStyle
+}
+
+/// A fence's settings in a popover, opened from its gear or ⋯ menu: all of them, or just the
+/// title style.
+struct FenceSettingsPopover: View {
+    let fenceID: UUID
+    var page: FenceSettingsPage = .all
+
+    var body: some View {
+        Group {
+            switch page {
+            case .all:
+                FenceSettingsForm(fenceID: fenceID, showsMore: true)
+            case .titleStyle:
+                SettingsSection("Title Style") {
+                    TitleStyleEditor(fenceID: fenceID)
+                }
+            }
+        }
+        .padding(14)
+        .frame(width: 300)
+        .fixedSize(horizontal: false, vertical: true)
+        // Darkens the see-through popover so the light controls read over any desktop.
+        .background(Color.black.opacity(0.45))
     }
 }
 

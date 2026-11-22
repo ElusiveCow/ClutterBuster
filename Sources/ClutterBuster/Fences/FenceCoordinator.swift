@@ -235,6 +235,13 @@ final class FenceCoordinator: ObservableObject {
         fitToContent(id)
     }
 
+    func setTitleStyle(_ id: UUID, _ style: TitleStyle) {
+        guard let fence = store.fence(id), fence.titleStyle != style else { return }
+        store.update(id) { $0.titleStyle = style }
+        Log.write("title style of \"\(fence.title)\" set to \(style.isDefault ? "the theme's" : "\(style)")")
+        fitToContent(id)
+    }
+
     func adjustTextScale(_ id: UUID, by steps: Int) {
         guard let fence = store.fence(id) else { return }
         setTextScale(id, fence.textScale + Double(steps) * Fence.textScaleStep)
@@ -295,12 +302,13 @@ final class FenceCoordinator: ObservableObject {
         Log.write("lowered fence \(id)")
     }
 
-    /// Shows all of a fence's settings in a popover pointing at `anchor` from its `edge`
+    /// Shows all of a fence's settings, or just its title style, in a popover pointing at
+    /// `anchor` from its `edge`
     /// (`.minY` is below). Without room there it sits beside the fence instead, so the fence
     /// stays in view while it changes. The fence is raised meanwhile; the popover's window
     /// isn't a desktop-level window, so clicks in it count as inside the raised fence. It
     /// closes on a click in the fence or anywhere outside it.
-    func showSettings(_ id: UUID, from anchor: NSView?, edge: NSRectEdge = .minY) {
+    func showSettings(_ id: UUID, page: FenceSettingsPage = .all, from anchor: NSView?, edge: NSRectEdge = .minY) {
         // Let a menu that triggered this finish closing first.
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
@@ -309,7 +317,7 @@ final class FenceCoordinator: ObservableObject {
                 self.closeSettings()
                 self.raise(id)
                 NSApp.activate(ignoringOtherApps: true)
-                let root = FenceSettingsPopover(fenceID: id)
+                let root = FenceSettingsPopover(fenceID: id, page: page)
                     .environmentObject(self.store)
                     .environmentObject(self)
                 let hosting = NSHostingController(rootView: root)
@@ -333,7 +341,7 @@ final class FenceCoordinator: ObservableObject {
                 // Otherwise the name field takes focus with its text selected, and a stray key
                 // renames the fence.
                 hosting.view.window?.makeFirstResponder(nil)
-                Log.write("settings: opened for fence \(id)")
+                Log.write("settings: opened \(page) for fence \(id)")
             }
         }
     }
@@ -372,6 +380,8 @@ final class FenceCoordinator: ObservableObject {
         settingsCloseObserver = nil
         settingsPopover = nil
         settingsFenceID = nil
+        // A title color picker left open has nothing to change once the popover is gone.
+        if NSColorPanel.sharedColorPanelExists, NSColorPanel.shared.isVisible { NSColorPanel.shared.orderOut(nil) }
         Log.write("settings: closed")
     }
 

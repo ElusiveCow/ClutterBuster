@@ -160,13 +160,15 @@ struct FenceView: View {
     }
 
     private func titleDragSurface(_ fence: Fence, style: ThemeStyle, metrics: FenceMetrics, animate: Bool) -> some View {
-        ZStack {
+        let title = fence.titleStyle.resolved(on: style, scale: metrics.scale)
+        let alignment: Alignment = title.alignment == .leading ? .leading : .center
+        return ZStack(alignment: alignment) {
             if isRenaming {
                 TextField("Fence name", text: $draftTitle)
                     .textFieldStyle(.plain)
-                    .multilineTextAlignment(.center)
-                    .font(.system(size: metrics.font(13), weight: .semibold, design: style.titleDesign))
-                    .foregroundStyle(style.titleText)
+                    .multilineTextAlignment(title.alignment == .leading ? .leading : .center)
+                    .font(title.font)
+                    .foregroundStyle(title.color)
                     .focused($titleFocused)
                     .onSubmit(commitRename)
                     .onExitCommand { isRenaming = false }
@@ -179,21 +181,21 @@ struct FenceView: View {
                 let count = fence.isCollapsed ? fence.items.count : fence.items(in: fence.currentTab.id).count
                 HStack(spacing: 0) {
                     Text(fence.title)
-                        .foregroundStyle(style.titleText)
+                        .font(title.font)
+                        .foregroundStyle(title.color)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Text(" \u{00B7} \(count)")
-                        .fontWeight(.regular)
-                        .foregroundStyle(style.titleSecondary)
+                        .font(title.countFont)
+                        .foregroundStyle(title.secondary)
                         .fixedSize()
                 }
-                .font(.system(size: metrics.font(13), weight: .semibold, design: style.titleDesign))
                 .shadow(color: style.textShadow, radius: 2, y: 1)
                 .padding(.horizontal, 34)
                 .help(count == 1 ? "1 item" : "\(count) items")
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
         .background {
             ZStack {
                 ThemeFillView(fill: style.titleBar)
@@ -219,7 +221,8 @@ struct FenceView: View {
             fence: fence,
             onRename: { startRename(fence) },
             onNewTab: addTab,
-            onSettings: { coordinator.showSettings(fenceID, from: menuAnchor.view, edge: .maxY) }
+            onSettings: { coordinator.showSettings(fenceID, from: menuAnchor.view, edge: .maxY) },
+            onTitleStyle: { coordinator.showSettings(fenceID, page: .titleStyle, from: menuAnchor.view, edge: .maxY) }
         )
     }
 
@@ -513,6 +516,7 @@ struct FenceMenu: View {
     let onRename: () -> Void
     let onNewTab: () -> Void
     let onSettings: () -> Void
+    let onTitleStyle: () -> Void
 
     @EnvironmentObject private var coordinator: FenceCoordinator
     @ObservedObject private var themes = ThemeSettings.shared
@@ -523,6 +527,7 @@ struct FenceMenu: View {
         Button("Fence Settings…", action: onSettings)
         Divider()
         Button("Rename…", action: onRename)
+        Button("Title Style…", action: onTitleStyle)
         Button("New Tab", action: onNewTab)
         Menu("Sort \u{201C}\(fence.currentTab.name)\u{201D}") {
             SortMenuContent(fenceID: fence.id, tab: fence.currentTab)

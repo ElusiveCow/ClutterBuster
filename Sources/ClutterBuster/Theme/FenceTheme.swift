@@ -78,7 +78,9 @@ struct ThemeStyle {
     var titleBar: ThemeFill
     var titleText: Color = .white
     var titleSecondary: Color = .white.opacity(0.6)
+    /// The title's default font and weight; a fence's `TitleStyle` can override them.
     var titleDesign: Font.Design = .default
+    var titleWeight: TitleWeight = .semibold
 
     var tabStrip: Color
     var tabPill: Color

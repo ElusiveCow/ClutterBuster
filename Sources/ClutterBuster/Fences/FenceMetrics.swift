@@ -16,7 +16,7 @@ struct FenceMetrics {
 
     init(_ fence: Fence) {
         scale = CGFloat(fence.textScale)
-        titleHeight = max(Self.baseTitleHeight, (13 * scale * 1.25).rounded(.up) + 13)
+        titleHeight = max(Self.baseTitleHeight, fence.titleStyle.lineHeight(scale: scale).rounded(.up) + 13)
     }
 
     /// A font size scaled by the fence's text size.
