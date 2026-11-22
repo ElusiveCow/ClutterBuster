@@ -101,8 +101,11 @@ final class DesktopIconService {
 
     private func handle(_ failure: FinderScript.Failure?) {
         switch failure {
-        case .notAuthorized: onAccessDenied()
-        case .failed(let message): NSLog("Clutter Buster: Finder script failed: \(message)")
+        case .notAuthorized:
+            Log.write("Finder: not authorized (Automation permission missing)")
+            onAccessDenied()
+        case .failed(let message):
+            Log.write("Finder: script failed: \(message)")
         case nil: break
         }
     }

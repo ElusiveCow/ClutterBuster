@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var shownAccessAlert = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Log.write("launched with \(store.fences.count) fences")
         desktop.onAccessDenied = { [weak self] in self?.showAccessAlert() }
         coordinator.start()
 

@@ -56,6 +56,7 @@ final class ItemDragView: NSView, NSDraggingSource {
         let distance = hypot(event.locationInWindow.x - down.locationInWindow.x, event.locationInWindow.y - down.locationInWindow.y)
         guard distance > 4 else { return }
         isDragging = true
+        Log.write("drag start: \"\(item.finderName)\"")
 
         let pasteboardItem = NSPasteboardItem()
         pasteboardItem.setString(item.id.uuidString, forType: .clutterBusterItem)
@@ -83,7 +84,7 @@ final class ItemDragView: NSView, NSDraggingSource {
         mouseDownEvent = nil
         guard let item, let fenceID else { return }
         let mouse = NSEvent.mouseLocation
-        coordinator?.itemDragEnded(item.id, from: fenceID, at: mouse)
+        coordinator?.itemDragEnded(item.id, from: fenceID, at: mouse, operation: operation)
     }
 
     // MARK: Context menu
