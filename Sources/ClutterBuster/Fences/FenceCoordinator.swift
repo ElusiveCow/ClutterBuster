@@ -19,7 +19,8 @@ final class FenceCoordinator: ObservableObject {
 
     private var controllers: [UUID: FenceWindowController] = [:]
     private var liveFrames: [UUID: CGRect] = [:]
-    private var interacting: Set<UUID> = []
+    /// Fences being moved or resized. Their theme animations pause meanwhile.
+    @Published private(set) var interacting: Set<UUID> = []
     private var verifyTimer: Timer?
     private var setup: FenceSetupController?
 
@@ -40,9 +41,14 @@ final class FenceCoordinator: ObservableObject {
     var collapsedHeight: CGFloat { Self.titleHeight + patchSize.height + Self.patchInset * 2 }
 
     static let tabBarHeight: CGFloat = 26
+    /// Room for a row of icons above the band kept clear for the corner.
+    static let minimumGridHeight: CGFloat = 72
 
     var minimumSize: CGSize {
-        CGSize(width: max(patchSize.width + Self.patchInset * 2, 180), height: collapsedHeight + Self.tabBarHeight)
+        CGSize(
+            width: max(patchSize.width + Self.patchInset * 2, 180),
+            height: collapsedHeight + Self.tabBarHeight + Self.minimumGridHeight
+        )
     }
 
     /// Where each fence's tabs and visible tiles are, in window content coordinates (top-left
@@ -148,6 +154,11 @@ final class FenceCoordinator: ObservableObject {
 
     func setOpacity(_ id: UUID, _ opacity: Double) {
         store.update(id) { $0.opacity = min(max(opacity, 0), 1) }
+    }
+
+    /// Nil makes the fence follow the global theme.
+    func setTheme(_ id: UUID, _ theme: FenceTheme?) {
+        store.update(id) { $0.theme = theme }
     }
 
     func setIconsPerRow(_ id: UUID, _ count: Int) {

@@ -39,6 +39,7 @@ private struct ResizeHandle: View {
 
     @EnvironmentObject private var coordinator: FenceCoordinator
     @State private var start: (mouse: CGPoint, frame: CGRect)?
+    @GestureState private var resizing = false
 
     var body: some View {
         Color.clear
@@ -46,8 +47,16 @@ private struct ResizeHandle: View {
             .onHover { inside in
                 if inside { cursor.push() } else { NSCursor.pop() }
             }
+            // A cancelled drag never calls onEnded, but its gesture state still resets.
+            .onChange(of: resizing) { _, active in
+                if !active, start != nil {
+                    start = nil
+                    coordinator.endInteraction(fenceID)
+                }
+            }
             .gesture(
                 DragGesture(minimumDistance: 1)
+                    .updating($resizing) { _, state, _ in state = true }
                     .onChanged { _ in
                         let mouse = NSEvent.mouseLocation
                         if start == nil {

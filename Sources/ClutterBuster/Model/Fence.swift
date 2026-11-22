@@ -45,8 +45,10 @@ struct Fence: Codable, Identifiable {
     var color: FenceColor
     var iconsPerRow: Int
     /// Opacity of the fence background, 0 (clear) to 1 (solid). The patch that hides the
-    /// real desktop icons is always solid.
+    /// real desktop icons is always solid. Like `color`, only Classic uses it.
     var opacity: Double = 1
+    /// Nil follows the global theme in Settings.
+    var theme: FenceTheme?
     /// In manual order: the order items appear in when their tab is sorted manually.
     var items: [FenceItem] = []
     /// Never empty.
@@ -84,6 +86,8 @@ extension Fence {
         color = try container.decodeIfPresent(FenceColor.self, forKey: .color) ?? .slate
         iconsPerRow = try container.decodeIfPresent(Int.self, forKey: .iconsPerRow) ?? 4
         opacity = try container.decodeIfPresent(Double.self, forKey: .opacity) ?? 1
+        // A theme from a newer version falls back to the global theme.
+        theme = (try? container.decodeIfPresent(FenceTheme.self, forKey: .theme)) ?? nil
         items = try container.decodeIfPresent([FenceItem].self, forKey: .items) ?? []
         tabs = try container.decodeIfPresent([FenceTab].self, forKey: .tabs) ?? []
         selectedTabID = try container.decodeIfPresent(UUID.self, forKey: .selectedTabID)

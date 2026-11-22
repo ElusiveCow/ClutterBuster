@@ -5,11 +5,13 @@ struct FenceView: View {
 
     @EnvironmentObject private var store: FenceStore
     @EnvironmentObject private var coordinator: FenceCoordinator
+    @ObservedObject private var themes = ThemeSettings.shared
 
     @State private var isRenaming = false
     @State private var draftTitle = ""
     @State private var isDropTargeted = false
     @State private var dragStart: (mouse: CGPoint, frame: CGRect)?
+    @GestureState private var moving = false
     @FocusState private var titleFocused: Bool
     @State private var editingTabID: UUID?
     @State private var tabDraft = ""
@@ -19,41 +21,46 @@ struct FenceView: View {
 
     var body: some View {
         if let fence = store.fence(fenceID) {
+            let style = ThemeStyle.resolve(fence, global: themes.globalTheme).collapsed(fence.isCollapsed)
+            let animate = themes.animates && !coordinator.interacting.contains(fenceID)
             let tab = fence.currentTab
             VStack(spacing: 0) {
-                titleBar(fence)
-                if !fence.isCollapsed { tabBar(fence) }
-                ZStack(alignment: .bottomTrailing) {
-                    if fence.isCollapsed {
-                        collapsedBody(fence)
-                    } else {
-                        ItemGrid(
-                            fence: fence,
-                            items: coordinator.displayedItems(fence, tab: tab),
-                            bottomInset: coordinator.patchSize.height + FenceCoordinator.patchInset
-                        )
-                    }
-                    GeometryReader { geo in
-                        StackPatch(
-                            fence: fence,
-                            // Collapsed fences count everything they hold; expanded ones count the tab shown.
-                            count: fence.isCollapsed ? fence.items.count : fence.items(in: tab.id).count,
-                            size: coordinator.patchSize,
-                            labelSize: GridMetrics(width: geo.size.width, columns: fence.iconsPerRow).label
-                        ) {
-                            if fence.isCollapsed { coordinator.toggleCollapse(fenceID) }
+                titleBar(fence, style: style, animate: animate)
+                if !fence.isCollapsed { tabBar(fence, style: style) }
+                GeometryReader { geo in
+                    let patch = coordinator.patchSize
+                    ZStack(alignment: .bottomTrailing) {
+                        ThemeBody(style: style, animate: animate)
+                        // The body already hides the icon stack when it's solid.
+                        if style.isSeeThrough {
+                            CornerPlate(style: style, patch: patch)
+                                .padding(FenceCoordinator.patchInset)
                         }
-                        .padding(FenceCoordinator.patchInset)
-                        .frame(width: geo.size.width, height: geo.size.height, alignment: .bottomTrailing)
+                        if fence.isCollapsed {
+                            collapsedBody(fence)
+                        } else {
+                            ItemGrid(
+                                fence: fence,
+                                style: style,
+                                items: coordinator.displayedItems(fence, tab: tab),
+                                reservedBottom: cornerBand(style, area: geo.size)
+                            )
+                        }
+                        CornerArt(style: style, patch: patch, area: geo.size, animate: animate)
                     }
+                    .frame(width: geo.size.width, height: geo.size.height)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(nsColor: fence.color.body).opacity(backgroundOpacity(fence)))
             }
             .clipShape(RoundedRectangle(cornerRadius: corner))
             .overlay {
-                RoundedRectangle(cornerRadius: corner)
-                    .strokeBorder(isDropTargeted ? Color.accentColor : Color.white.opacity(0.12), lineWidth: isDropTargeted ? 3 : 1)
+                ThemeBorderView(border: style.border, cornerRadius: corner, live: true, animate: animate)
+            }
+            .overlay {
+                if isDropTargeted {
+                    RoundedRectangle(cornerRadius: corner)
+                        .strokeBorder(Color.accentColor, lineWidth: 3)
+                        .allowsHitTesting(false)
+                }
             }
             .overlay { ResizeHandles(fenceID: fenceID, isCollapsed: fence.isCollapsed) }
             .dropDestination(for: URL.self) { urls, _ in
@@ -63,14 +70,25 @@ struct FenceView: View {
         }
     }
 
-    private func titleBar(_ fence: Fence) -> some View {
+    // The buttons sit beside the drag surface rather than inside it: a menu swallows its
+    // mouse-up, which would leave the move gesture mid-press and lose the next drag.
+    private func titleBar(_ fence: Fence, style: ThemeStyle, animate: Bool) -> some View {
+        ZStack {
+            titleDragSurface(fence, style: style, animate: animate)
+            titleButtons(fence, style: style)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: FenceCoordinator.titleHeight)
+    }
+
+    private func titleDragSurface(_ fence: Fence, style: ThemeStyle, animate: Bool) -> some View {
         ZStack {
             if isRenaming {
                 TextField("Fence name", text: $draftTitle)
                     .textFieldStyle(.plain)
                     .multilineTextAlignment(.center)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 13, weight: .semibold, design: style.titleDesign))
+                    .foregroundStyle(style.titleText)
                     .focused($titleFocused)
                     .onSubmit(commitRename)
                     .onExitCommand { isRenaming = false }
@@ -79,64 +97,88 @@ struct FenceView: View {
                     }
                     .padding(.horizontal, 34)
             } else {
-                Text(fence.title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .shadow(color: .black.opacity(fence.opacity < 1 ? 0.6 : 0), radius: 2, y: 1)
-                    .padding(.horizontal, 34)
-            }
-            HStack {
-                Menu {
-                    FenceMenu(fence: fence, onRename: { startRename(fence) }, onNewTab: addTab)
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.8))
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
+                // Collapsed fences count everything they hold; expanded ones count the tab shown.
+                let count = fence.isCollapsed ? fence.items.count : fence.items(in: fence.currentTab.id).count
+                HStack(spacing: 0) {
+                    Text(fence.title)
+                        .foregroundStyle(style.titleText)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Text(" \u{00B7} \(count)")
+                        .fontWeight(.regular)
+                        .foregroundStyle(style.titleSecondary)
+                        .fixedSize()
                 }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Fence options")
-                Spacer()
-                Button {
-                    coordinator.toggleCollapse(fenceID)
-                } label: {
-                    Image(systemName: fence.isCollapsed ? "chevron.down" : "chevron.up")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.8))
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(fence.isCollapsed ? "Expand" : "Collapse")
+                .font(.system(size: 13, weight: .semibold, design: style.titleDesign))
+                .shadow(color: style.textShadow, radius: 2, y: 1)
+                .padding(.horizontal, 34)
+                .help(count == 1 ? "1 item" : "\(count) items")
             }
-            .padding(.horizontal, 6)
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: FenceCoordinator.titleHeight)
-        .background(Color(nsColor: fence.color.titleBar))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            ZStack {
+                ThemeFillView(fill: style.titleBar)
+                TitleAccentView(accent: style.titleAccent, animate: animate)
+            }
+            .allowsHitTesting(false)
+        }
         .contentShape(Rectangle())
+        // A cancelled drag never calls onEnded, but its gesture state still resets.
+        .onChange(of: moving) { _, active in
+            if !active, dragStart != nil {
+                dragStart = nil
+                coordinator.endInteraction(fenceID)
+            }
+        }
         .gesture(moveGesture)
         .simultaneousGesture(TapGesture(count: 2).onEnded { startRename(fence) })
         .contextMenu { FenceMenu(fence: fence, onRename: { startRename(fence) }, onNewTab: addTab) }
     }
 
-    private func tabBar(_ fence: Fence) -> some View {
+    private func titleButtons(_ fence: Fence, style: ThemeStyle) -> some View {
+        HStack {
+            Menu {
+                FenceMenu(fence: fence, onRename: { startRename(fence) }, onNewTab: addTab)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(style.titleText.opacity(0.8))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Fence options")
+            Spacer()
+            Button {
+                coordinator.toggleCollapse(fenceID)
+            } label: {
+                Image(systemName: fence.isCollapsed ? "chevron.down" : "chevron.up")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(style.titleText.opacity(0.8))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(fence.isCollapsed ? "Expand" : "Collapse")
+        }
+        .padding(.horizontal, 6)
+    }
+
+    private func tabBar(_ fence: Fence, style: ThemeStyle) -> some View {
         HStack(spacing: 4) {
             ScrollView(.horizontal) {
                 HStack(spacing: 2) {
                     ForEach(fence.tabs) { tab in
-                        tabButton(fence, tab)
+                        tabButton(fence, tab, style: style)
                     }
                     Button(action: addTab) {
                         Image(systemName: "plus")
                             .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.7))
+                            .foregroundStyle(style.tabText)
                             .frame(width: 20, height: 20)
                             .contentShape(Rectangle())
                     }
@@ -158,10 +200,10 @@ struct FenceView: View {
                         .lineLimit(1)
                 }
                 .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.white.opacity(0.8))
+                .foregroundStyle(style.tabText)
                 .padding(.horizontal, 7)
                 .frame(height: 18)
-                .background(Capsule().fill(Color.white.opacity(0.12)))
+                .background(Capsule().fill(style.tabControl))
                 .contentShape(Capsule())
             }
             .menuStyle(.button)
@@ -172,17 +214,17 @@ struct FenceView: View {
             .padding(.trailing, 6)
         }
         .frame(height: FenceCoordinator.tabBarHeight)
-        .background(Color(nsColor: fence.color.titleBar.blended(withFraction: 0.08, of: .white) ?? fence.color.titleBar))
+        .background(style.tabStrip)
     }
 
-    private func tabButton(_ fence: Fence, _ tab: FenceTab) -> some View {
+    private func tabButton(_ fence: Fence, _ tab: FenceTab, style: ThemeStyle) -> some View {
         let selected = tab.id == fence.currentTab.id
         return Group {
             if editingTabID == tab.id {
                 TextField("Tab name", text: $tabDraft)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(style.tabSelectedText)
                     .frame(width: max(50, CGFloat(tabDraft.count) * 8 + 10))
                     .focused($tabFieldFocused)
                     .onSubmit(commitTabRename)
@@ -193,15 +235,21 @@ struct FenceView: View {
             } else {
                 Text(tab.name)
                     .font(.system(size: 12, weight: selected ? .semibold : .regular))
-                    .foregroundStyle(.white.opacity(selected ? 1 : 0.65))
-                    .shadow(color: .black.opacity(0.45), radius: 1.5, y: 1)
+                    .foregroundStyle(selected ? style.tabSelectedText : style.tabText)
+                    .shadow(color: style.textShadow, radius: 1.5, y: 1)
                     .lineLimit(1)
                     .fixedSize()
             }
         }
         .padding(.horizontal, 9)
         .frame(height: 21)
-        .background(Capsule().fill(Color.white.opacity(selected ? 0.35 : 0)))
+        .background {
+            if selected {
+                Capsule()
+                    .fill(style.tabPill)
+                    .shadow(color: .black.opacity(0.15), radius: 1.5, y: 0.5)
+            }
+        }
         .contentShape(Capsule())
         .background(GeometryReader { geo in
             Color.clear.preference(key: TabFramesKey.self, value: [tab.id: geo.frame(in: .global)])
@@ -242,14 +290,20 @@ struct FenceView: View {
             .contextMenu { FenceMenu(fence: fence, onRename: { startRename(fence) }, onNewTab: addTab) }
     }
 
-    /// Fully transparent pixels let clicks and drops fall through to the desktop, so "Clear"
-    /// keeps a barely visible tint.
-    private func backgroundOpacity(_ fence: Fence) -> Double {
-        max(fence.opacity, 0.03)
+    /// Height along the bottom that tiles stay above: the corner art, or the plate over the
+    /// patch on see-through fences without art. Solid fences without art use the full height.
+    private func cornerBand(_ style: ThemeStyle, area: CGSize) -> CGFloat {
+        let margin: CGFloat = 4
+        if let art = CornerArt.size(for: style, patch: coordinator.patchSize, area: area) {
+            return art.height + CornerArt.padding + margin
+        }
+        guard style.isSeeThrough else { return 0 }
+        return coordinator.patchSize.height + FenceCoordinator.patchInset + CornerPlate.spill(style) + margin
     }
 
     private var moveGesture: some Gesture {
         DragGesture(minimumDistance: 2)
+            .updating($moving) { _, state, _ in state = true }
             .onChanged { _ in
                 let mouse = NSEvent.mouseLocation
                 if dragStart == nil {
@@ -282,42 +336,39 @@ struct FenceView: View {
     }
 }
 
-/// The solid patch over the hidden desktop icon stack. Its size is fixed by the desktop icon
-/// footprint; the item count matches the fence's label size so it scales with the fence.
-struct StackPatch: View {
-    let fence: Fence
-    let count: Int
-    let size: CGSize
-    let labelSize: CGFloat
-    let onTap: () -> Void
-
-    var body: some View {
-        Text(count == 1 ? "1 item" : "\(count) items")
-            .font(.system(size: labelSize, weight: .medium))
-            .foregroundStyle(.white.opacity(0.6))
-            .lineLimit(1)
-            .frame(width: size.width, height: size.height)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: fence.color.body)))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.white.opacity(0.08)))
-        .contentShape(RoundedRectangle(cornerRadius: 10))
-        .onTapGesture(perform: onTap)
-    }
-}
-
 struct FenceMenu: View {
     let fence: Fence
     let onRename: () -> Void
     let onNewTab: () -> Void
 
     @EnvironmentObject private var coordinator: FenceCoordinator
+    @ObservedObject private var themes = ThemeSettings.shared
 
     var body: some View {
+        // Color and transparency belong to Classic; other themes set their own.
+        let isClassic = (fence.theme ?? themes.globalTheme) == .classic
         Button("Rename…", action: onRename)
         Button("New Tab", action: onNewTab)
         Menu("Sort \u{201C}\(fence.currentTab.name)\u{201D}") {
             SortMenuContent(fenceID: fence.id, tab: fence.currentTab)
         }
         Divider()
+        Menu("Theme") {
+            Button {
+                coordinator.setTheme(fence.id, nil)
+            } label: {
+                let title = "Use Global (\(themes.globalTheme.name))"
+                if fence.theme == nil { Label(title, systemImage: "checkmark") } else { Text(title) }
+            }
+            Divider()
+            ForEach(FenceTheme.allCases) { theme in
+                Button {
+                    coordinator.setTheme(fence.id, theme)
+                } label: {
+                    if theme == fence.theme { Label(theme.name, systemImage: "checkmark") } else { Text(theme.name) }
+                }
+            }
+        }
         Menu("Color") {
             ForEach(FenceColor.allCases) { color in
                 Button {
@@ -327,6 +378,7 @@ struct FenceMenu: View {
                 }
             }
         }
+        .disabled(!isClassic)
         Menu("Icons per Row") {
             ForEach(Array(AppSettings.iconsPerRowRange), id: \.self) { count in
                 Button {
@@ -346,6 +398,7 @@ struct FenceMenu: View {
                 }
             }
         }
+        .disabled(!isClassic)
         Button(fence.isCollapsed ? "Expand" : "Collapse") { coordinator.toggleCollapse(fence.id) }
         Divider()
         Button("Delete Fence…", role: .destructive) { coordinator.confirmDelete(fence.id) }
