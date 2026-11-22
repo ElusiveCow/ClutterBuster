@@ -169,52 +169,145 @@ struct FenceView: View {
     }
 
     private func tabBar(_ fence: Fence, style: ThemeStyle) -> some View {
-        HStack(spacing: 4) {
+        Group {
+            if fence.tabsCollapsed {
+                collapsedTabBar(fence, style: style)
+            } else {
+                VStack(spacing: 0) {
+                    HStack(alignment: .top, spacing: 4) {
+                        tabList(fence, style: style)
+                            .onPreferenceChange(TabFramesKey.self) { coordinator.tabFrames[fenceID] = $0 }
+                        sortButton(fence, style: style)
+                            .frame(height: FenceCoordinator.tabBarHeight)
+                            .padding(.trailing, 6)
+                    }
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    TabStripGrip(fenceID: fenceID, rows: fence.tabRows, style: style)
+                }
+            }
+        }
+        .frame(height: FenceCoordinator.tabStripHeight(fence))
+        .background(style.tabStrip)
+        .background(GeometryReader { geo in
+            Color.clear.preference(key: TabStripFrameKey.self, value: geo.frame(in: .global))
+        })
+        .onPreferenceChange(TabStripFrameKey.self) { coordinator.tabStripFrames[fenceID] = $0 }
+    }
+
+    /// One row scrolls sideways. Taller strips wrap the tabs and scroll down when they overflow.
+    @ViewBuilder
+    private func tabList(_ fence: Fence, style: ThemeStyle) -> some View {
+        if fence.tabRows > 1 {
+            ScrollView(.vertical) {
+                FlowLayout(spacing: 2, lineSpacing: FenceCoordinator.tabRowHeight - 21) {
+                    ForEach(fence.tabs) { tab in
+                        tabButton(fence, tab, style: style)
+                    }
+                    addTabButton(style)
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, (FenceCoordinator.tabBarHeight - 21) / 2)
+            }
+            .scrollIndicators(.automatic)
+        } else {
             ScrollView(.horizontal) {
                 HStack(spacing: 2) {
                     ForEach(fence.tabs) { tab in
                         tabButton(fence, tab, style: style)
                     }
-                    Button(action: addTab) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(style.tabText)
-                            .frame(width: 20, height: 20)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("New tab")
+                    addTabButton(style)
                 }
                 .padding(.horizontal, 6)
             }
             .scrollIndicators(.never)
-            .onPreferenceChange(TabFramesKey.self) { coordinator.tabFrames[fenceID] = $0 }
+            .frame(height: FenceCoordinator.tabBarHeight)
+        }
+    }
 
-            Menu {
-                SortMenuContent(fenceID: fenceID, tab: fence.currentTab)
-            } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "arrow.up.arrow.down")
-                        .font(.system(size: 8, weight: .bold))
-                    Text(fence.currentTab.sort.label)
-                        .lineLimit(1)
-                }
-                .font(.system(size: 10, weight: .medium))
+    private func addTabButton(_ style: ThemeStyle) -> some View {
+        Button(action: addTab) {
+            Image(systemName: "plus")
+                .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(style.tabText)
-                .padding(.horizontal, 7)
-                .frame(height: 18)
-                .background(Capsule().fill(style.tabControl))
-                .contentShape(Capsule())
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("New tab")
+    }
+
+    private func sortButton(_ fence: Fence, style: ThemeStyle) -> some View {
+        Menu {
+            SortMenuContent(fenceID: fenceID, tab: fence.currentTab)
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.system(size: 8, weight: .bold))
+                Text(fence.currentTab.sort.label)
+                    .lineLimit(1)
+            }
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(style.tabText)
+            .padding(.horizontal, 7)
+            .frame(height: 18)
+            .background(Capsule().fill(style.tabControl))
+            .contentShape(Capsule())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Sort this tab")
+    }
+
+    /// The tucked-away strip: the current tab's name opens a menu of tabs, and the chevron
+    /// brings the strip back.
+    private func collapsedTabBar(_ fence: Fence, style: ThemeStyle) -> some View {
+        HStack(spacing: 4) {
+            Menu {
+                ForEach(fence.tabs) { tab in
+                    Button {
+                        coordinator.selectTab(fenceID, tab.id)
+                    } label: {
+                        if tab.id == fence.currentTab.id { Label(tab.name, systemImage: "checkmark") } else { Text(tab.name) }
+                    }
+                }
+                Divider()
+                Button("New Tab", action: addTab)
+            } label: {
+                HStack(spacing: 4) {
+                    Text(fence.currentTab.name)
+                        .font(.system(size: 11, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 7, weight: .bold))
+                }
+                .foregroundStyle(style.tabText)
+                .shadow(color: style.textShadow, radius: 1.5, y: 1)
+                .padding(.horizontal, 9)
+                .frame(height: FenceCoordinator.collapsedTabBarHeight)
+                .contentShape(Rectangle())
             }
             .menuStyle(.button)
             .buttonStyle(.plain)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("Sort this tab")
-            .padding(.trailing, 6)
+            .help("Switch tabs")
+            Spacer(minLength: 0)
+            Button {
+                coordinator.setTabStrip(fenceID, rows: fence.tabRows, collapsed: false)
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(style.tabText)
+                    .frame(width: 24, height: FenceCoordinator.collapsedTabBarHeight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Show tabs")
+            .padding(.trailing, 4)
         }
-        .frame(height: FenceCoordinator.tabBarHeight)
-        .background(style.tabStrip)
     }
 
     private func tabButton(_ fence: Fence, _ tab: FenceTab, style: ThemeStyle) -> some View {
@@ -264,7 +357,10 @@ struct FenceView: View {
     }
 
     private func addTab() {
-        guard let id = coordinator.addTab(fenceID), let tab = store.fence(fenceID)?.tabs.first(where: { $0.id == id }) else { return }
+        guard let id = coordinator.addTab(fenceID), let fence = store.fence(fenceID),
+              let tab = fence.tabs.first(where: { $0.id == id }) else { return }
+        // The new tab's name is edited in the strip, so it has to be showing.
+        if fence.tabsCollapsed { coordinator.setTabStrip(fenceID, rows: fence.tabRows, collapsed: false) }
         startTabRename(id, name: tab.name)
     }
 
@@ -399,6 +495,10 @@ struct FenceMenu: View {
             }
         }
         .disabled(!isClassic)
+        Button(fence.tabsCollapsed ? "Show Tabs" : "Tuck Tabs Away") {
+            coordinator.setTabStrip(fence.id, rows: fence.tabRows, collapsed: !fence.tabsCollapsed)
+        }
+        .disabled(fence.isCollapsed)
         Button(fence.isCollapsed ? "Expand" : "Collapse") { coordinator.toggleCollapse(fence.id) }
         Divider()
         Button("Delete Fence…", role: .destructive) { coordinator.confirmDelete(fence.id) }
@@ -446,6 +546,65 @@ struct TabFramesKey: PreferenceKey {
     static let defaultValue: [UUID: CGRect] = [:]
     static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
         value.merge(nextValue()) { $1 }
+    }
+}
+
+/// The tab strip's frame, in window content coordinates.
+struct TabStripFrameKey: PreferenceKey {
+    static let defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        // Views that don't report a frame pass along the empty default.
+        let next = nextValue()
+        if next != .zero { value = next }
+    }
+}
+
+/// The bar under the tabs. Dragging it down shows more rows of tabs, snapping to whole
+/// rows; dragging it up past the first row tucks the strip away.
+private struct TabStripGrip: View {
+    let fenceID: UUID
+    let rows: Int
+    let style: ThemeStyle
+
+    @EnvironmentObject private var coordinator: FenceCoordinator
+    @State private var startRows: Int?
+    @State private var hovering = false
+    @GestureState private var dragging = false
+
+    var body: some View {
+        Capsule()
+            .fill(style.tabText.opacity(hovering || dragging ? 0.6 : 0.3))
+            .frame(width: 28, height: 3)
+            .frame(maxWidth: .infinity)
+            .frame(height: FenceCoordinator.tabGripHeight)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                hovering = inside
+                if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+            }
+            // Tucking the strip away removes the grip mid-hover.
+            .onDisappear { if hovering { NSCursor.pop() } }
+            .onChange(of: dragging) { _, active in
+                if !active { startRows = nil }
+            }
+            .help("Drag down for more rows of tabs, or up to tuck them away")
+            .gesture(
+                // Global coordinates: the grip moves as the strip grows.
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .updating($dragging) { _, state, _ in state = true }
+                    .onChanged { value in
+                        let start = startRows ?? rows
+                        if startRows == nil { startRows = rows }
+                        let height = FenceCoordinator.tabStripHeight(rows: start, collapsed: false) + value.translation.height
+                        let oneRow = FenceCoordinator.tabStripHeight(rows: 1, collapsed: false)
+                        if height < oneRow - FenceCoordinator.tabBarHeight / 2 {
+                            coordinator.setTabStrip(fenceID, rows: start, collapsed: true)
+                        } else {
+                            let wanted = Int(((height - oneRow) / FenceCoordinator.tabRowHeight).rounded()) + 1
+                            coordinator.setTabStrip(fenceID, rows: wanted, collapsed: false)
+                        }
+                    }
+            )
     }
 }
 

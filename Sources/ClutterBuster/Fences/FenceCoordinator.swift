@@ -40,25 +40,55 @@ final class FenceCoordinator: ObservableObject {
 
     var collapsedHeight: CGFloat { Self.titleHeight + patchSize.height + Self.patchInset * 2 }
 
+    /// Height of the tab strip's first row. Each further row adds `tabRowHeight`.
     static let tabBarHeight: CGFloat = 26
+    static let tabRowHeight: CGFloat = 24
+    /// The bar under the tabs that's dragged to show more rows.
+    static let tabGripHeight: CGFloat = 6
+    static let collapsedTabBarHeight: CGFloat = 18
+    static let maxTabRows = 4
     /// Room for a row of icons above the band kept clear for the corner.
     static let minimumGridHeight: CGFloat = 72
 
-    var minimumSize: CGSize {
+    static func tabStripHeight(rows: Int, collapsed: Bool) -> CGFloat {
+        guard !collapsed else { return collapsedTabBarHeight }
+        return tabBarHeight + CGFloat(max(rows, 1) - 1) * tabRowHeight + tabGripHeight
+    }
+
+    static func tabStripHeight(_ fence: Fence) -> CGFloat {
+        tabStripHeight(rows: fence.tabRows, collapsed: fence.tabsCollapsed)
+    }
+
+    func minimumSize(for fence: Fence) -> CGSize {
         CGSize(
             width: max(patchSize.width + Self.patchInset * 2, 180),
-            height: collapsedHeight + Self.tabBarHeight + Self.minimumGridHeight
+            height: collapsedHeight + Self.tabStripHeight(fence) + Self.minimumGridHeight
         )
+    }
+
+    /// The most tab rows a fence this tall can show: the strip takes at most half the space
+    /// under the title, and the grid keeps its minimum.
+    func maxTabRows(forHeight height: CGFloat) -> Int {
+        var rows = 1
+        while rows < Self.maxTabRows {
+            let strip = Self.tabStripHeight(rows: rows + 1, collapsed: false)
+            guard collapsedHeight + strip + Self.minimumGridHeight <= height, strip <= (height - Self.titleHeight) / 2 else { break }
+            rows += 1
+        }
+        return rows
     }
 
     /// Where each fence's tabs and visible tiles are, in window content coordinates (top-left
     /// origin), so drops can be matched to a tab or a position in the grid.
     var tabFrames: [UUID: [UUID: CGRect]] = [:]
+    /// The visible part of each fence's tab strip. Tabs scrolled out of it don't take drops.
+    var tabStripFrames: [UUID: CGRect] = [:]
     var tileFrames: [UUID: [UUID: CGRect]] = [:]
 
     func start() {
-        let minimum = minimumSize
-        for fence in store.fences where fence.frame.width < minimum.width || fence.frame.height < minimum.height {
+        for fence in store.fences {
+            let minimum = minimumSize(for: fence)
+            guard fence.frame.width < minimum.width || fence.frame.height < minimum.height else { continue }
             store.update(fence.id) { fence in
                 let top = fence.frame.maxY
                 fence.frame.size.width = max(fence.frame.width, minimum.width)
@@ -138,6 +168,7 @@ final class FenceCoordinator: ObservableObject {
         desktop.move(restorePositions(for: fence.items, leaving: fence))
         controllers.removeValue(forKey: id)?.close()
         tabFrames[id] = nil
+        tabStripFrames[id] = nil
         tileFrames[id] = nil
         store.remove(id)
     }
@@ -159,6 +190,19 @@ final class FenceCoordinator: ObservableObject {
     /// Nil makes the fence follow the global theme.
     func setTheme(_ id: UUID, _ theme: FenceTheme?) {
         store.update(id) { $0.theme = theme }
+    }
+
+    /// Sets how many rows of tabs show, within what the fence's height allows, or tucks the
+    /// strip away. Collapsing keeps the row count for when it's expanded again.
+    func setTabStrip(_ id: UUID, rows: Int, collapsed: Bool) {
+        guard let fence = store.fence(id) else { return }
+        let rows = min(max(rows, 1), maxTabRows(forHeight: expandedFrame(id).height))
+        guard fence.tabRows != rows || fence.tabsCollapsed != collapsed else { return }
+        if collapsed { tabFrames[id] = [:] }
+        store.update(id) { fence in
+            fence.tabRows = rows
+            fence.tabsCollapsed = collapsed
+        }
     }
 
     func setIconsPerRow(_ id: UUID, _ count: Int) {
@@ -405,8 +449,9 @@ final class FenceCoordinator: ObservableObject {
         restack(id)
     }
 
-    func resizedFrame(from start: CGRect, edges: ResizeEdges, delta: CGSize) -> CGRect {
-        let minimum = minimumSize
+    func resizedFrame(_ id: UUID, from start: CGRect, edges: ResizeEdges, delta: CGSize) -> CGRect {
+        guard let fence = store.fence(id) else { return start }
+        let minimum = minimumSize(for: fence)
         var frame = start
         if edges.contains(.right) {
             frame.size.width = max(minimum.width, start.width + delta.width)
@@ -520,7 +565,9 @@ final class FenceCoordinator: ObservableObject {
 
     /// The tab whose name is under `point`, if the fence is showing its tabs.
     private func tab(at point: CGPoint, in fence: Fence) -> FenceTab? {
-        guard !fence.isCollapsed, let frames = tabFrames[fence.id] else { return nil }
+        guard !fence.isCollapsed, let frames = tabFrames[fence.id],
+              let strip = tabStripFrames[fence.id].flatMap({ screenRect($0, in: fence.id) }), strip.contains(point)
+        else { return nil }
         return fence.tabs.first { tab in
             frames[tab.id].flatMap { screenRect($0, in: fence.id) }?.contains(point) == true
         }

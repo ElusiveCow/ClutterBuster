@@ -54,6 +54,10 @@ struct Fence: Codable, Identifiable {
     /// Never empty.
     var tabs: [FenceTab] = [FenceTab(name: FenceTab.defaultName)]
     var selectedTabID: UUID?
+    /// Rows of tabs the strip is tall enough to show. One row scrolls sideways; more wrap.
+    var tabRows = 1
+    /// Shrinks the tab strip to a thin bar showing just the current tab.
+    var tabsCollapsed = false
 
     /// The tab currently shown, falling back to the first tab.
     var currentTab: FenceTab {
@@ -91,6 +95,8 @@ extension Fence {
         items = try container.decodeIfPresent([FenceItem].self, forKey: .items) ?? []
         tabs = try container.decodeIfPresent([FenceTab].self, forKey: .tabs) ?? []
         selectedTabID = try container.decodeIfPresent(UUID.self, forKey: .selectedTabID)
+        tabRows = max(1, try container.decodeIfPresent(Int.self, forKey: .tabRows) ?? 1)
+        tabsCollapsed = try container.decodeIfPresent(Bool.self, forKey: .tabsCollapsed) ?? false
         normalizeTabs()
     }
 }
