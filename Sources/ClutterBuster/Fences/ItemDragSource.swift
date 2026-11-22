@@ -7,8 +7,8 @@ extension NSPasteboard.PasteboardType {
     static let clutterBusterItem = NSPasteboard.PasteboardType("com.elusivecow.clutterbuster.item")
 }
 
-/// Handles clicks, drags and the context menu for one item tile. A click opens the item;
-/// a drag carries it to the desktop or to another fence.
+/// Handles clicks, drags and the context menu for one item tile. A click selects the item
+/// and a double-click opens it; a drag carries it to the desktop or to another fence.
 struct ItemDragSource: NSViewRepresentable {
     let item: FenceItem
     let fenceID: UUID
@@ -73,7 +73,11 @@ final class ItemDragView: NSView, NSDraggingSource {
     override func mouseUp(with event: NSEvent) {
         defer { mouseDownEvent = nil }
         guard !isDragging, let item else { return }
-        coordinator?.open(item)
+        if event.clickCount >= 2 {
+            coordinator?.open(item)
+        } else {
+            coordinator?.selectedItemID = item.id
+        }
     }
 
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {

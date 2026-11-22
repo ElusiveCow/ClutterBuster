@@ -107,16 +107,22 @@ struct ItemTile: View {
 
     var body: some View {
         let exists = FileManager.default.fileExists(atPath: item.path)
+        let selected = coordinator.selectedItemID == item.id
         VStack(spacing: 3) {
             ItemIcon(path: item.path, size: metrics.icon)
+                .padding(3)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(selected ? 0.22 : 0)))
+                .padding(-3)
             if metrics.showLabels {
                 Text(item.displayName)
                     .font(.system(size: metrics.label))
-                    .foregroundStyle(style.bodyText)
+                    .foregroundStyle(selected ? .white : style.bodyText)
                     .lineLimit(2)
                     .truncationMode(.middle)
                     .multilineTextAlignment(.center)
-                    .shadow(color: style.isLight ? .white.opacity(0.6) : .black.opacity(0.4), radius: 1, y: 1)
+                    .padding(.horizontal, 4)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(Color.accentColor.opacity(selected ? 1 : 0)))
+                    .shadow(color: selected ? .clear : (style.isLight ? .white.opacity(0.6) : .black.opacity(0.4)), radius: 1, y: 1)
             }
         }
         .frame(width: metrics.cell, height: metrics.tileHeight - 8, alignment: .top)

@@ -17,6 +17,17 @@ final class DesktopLevelWindow: NSWindow {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    /// Called for every mouse-down in the fence, before it's handled.
+    var onMouseDown: (() -> Void)?
+
+    override func sendEvent(_ event: NSEvent) {
+        switch event.type {
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown: onMouseDown?()
+        default: break
+        }
+        super.sendEvent(event)
+    }
 }
 
 /// Lets clicks land on the first try even though Clutter Buster is a background app.
@@ -43,6 +54,7 @@ final class FenceWindowController {
             .environmentObject(coordinator.store)
             .environmentObject(coordinator)
         window.contentView = FirstMouseHostingView(rootView: root)
+        window.onMouseDown = { [weak coordinator] in coordinator?.raise(fenceID) }
     }
 
     func close() {

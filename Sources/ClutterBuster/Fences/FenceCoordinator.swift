@@ -21,7 +21,21 @@ final class FenceCoordinator: ObservableObject {
     private var liveFrames: [UUID: CGRect] = [:]
     /// Fences being moved or resized. Their theme animations pause meanwhile.
     @Published private(set) var interacting: Set<UUID> = []
+    /// The item tile last clicked once, shown highlighted like a selected Finder icon.
+    @Published var selectedItemID: UUID?
     private var setup: FenceSetupController?
+    /// The fence brought above app windows by clicking it. It drops back to desktop level on
+    /// the next click anywhere else.
+    private(set) var raisedFenceID: UUID?
+    private lazy var raisedOutsideClicks = OutsideClickMonitor(
+        inside: { [weak self] in
+            // Its menus and popovers count as inside; other fences don't.
+            NSApp.windows.filter { window in
+                !(window is DesktopLevelWindow) || window === self?.raisedFenceID.flatMap { self?.controllers[$0]?.window }
+            }
+        },
+        onOutsideClick: { [weak self] in self?.lowerRaisedFence() }
+    )
 
     /// False after `restoreAllToDesktop` until `hideAllFencedFiles`. Items added meanwhile
     /// stay visible on the Desktop.
@@ -101,6 +115,14 @@ final class FenceCoordinator: ObservableObject {
             MainActor.assumeIsolated { self?.screensChanged() }
         }
         NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.selectedItemID = nil
+                self?.lowerRaisedFence()
+            }
+        }
+        NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -135,6 +157,7 @@ final class FenceCoordinator: ObservableObject {
     @discardableResult
     func createFenceWithSetup() -> UUID {
         setup?.finish()
+        lowerRaisedFence()
         let id = createFence()
         guard let window = controllers[id]?.window else { return id }
         let controller = FenceSetupController(fenceID: id, fenceWindow: window, coordinator: self)
@@ -169,6 +192,7 @@ final class FenceCoordinator: ObservableObject {
         guard let fence = store.fence(id) else { return }
         Log.write("deleted fence \"\(fence.title)\" (\(id)) with \(fence.items.count) item(s)")
         if setup?.fenceID == id { setup?.finish() }
+        if raisedFenceID == id { lowerRaisedFence() }
         unhide(fence.items)
         controllers.removeValue(forKey: id)?.close()
         tabFrames[id] = nil
@@ -222,6 +246,29 @@ final class FenceCoordinator: ObservableObject {
         for fence in store.fences where fence.isCollapsed != collapsed {
             toggleCollapse(fence.id)
         }
+    }
+
+    /// Brings a clicked fence above app windows until the next click elsewhere. A fence in
+    /// its setup card already floats, and the card settles it.
+    func raise(_ id: UUID) {
+        guard setup?.fenceID != id, let window = controllers[id]?.window else { return }
+        if raisedFenceID != id {
+            lowerRaisedFence()
+            raisedFenceID = id
+            window.level = .floating
+            Log.write("raised fence \(id)")
+        }
+        window.orderFrontRegardless()
+        raisedOutsideClicks.start()
+    }
+
+    func lowerRaisedFence() {
+        guard let id = raisedFenceID else { return }
+        raisedFenceID = nil
+        raisedOutsideClicks.stop()
+        guard setup?.fenceID != id else { return }
+        controllers[id]?.window.level = DesktopLevelWindow.desktopLevel
+        Log.write("lowered fence \(id)")
     }
 
     /// Makes a fence's window key so its title can be edited.
@@ -414,10 +461,13 @@ final class FenceCoordinator: ObservableObject {
     }
 
     func open(_ item: FenceItem) {
+        // The opened app comes forward; the fence goes back under it.
+        lowerRaisedFence()
         NSWorkspace.shared.open(item.url)
     }
 
     func revealInFinder(_ item: FenceItem) {
+        lowerRaisedFence()
         revealInFinder(item.url)
     }
 
