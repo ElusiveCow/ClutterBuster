@@ -1,0 +1,99 @@
+import AppKit
+import SwiftUI
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let store = FenceStore()
+    private let desktop = DesktopIconService()
+    private lazy var coordinator = FenceCoordinator(store: store, desktop: desktop)
+    private var toolbar: ToolbarWindowController?
+    private var statusItem: NSStatusItem?
+    private var settingsWindow: NSWindow?
+    private var shownAccessAlert = false
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        desktop.onAccessDenied = { [weak self] in self?.showAccessAlert() }
+        coordinator.start()
+
+        let toolbar = ToolbarWindowController(store: store, actions: ToolbarActions(
+            newFence: { [weak self] in self?.coordinator.createFence() },
+            collapseAll: { [weak self] in self?.coordinator.setAllCollapsed(true) },
+            expandAll: { [weak self] in self?.coordinator.setAllCollapsed(false) },
+            openSettings: { [weak self] in self?.openSettings() }
+        ))
+        toolbar.show()
+        self.toolbar = toolbar
+        buildStatusItem()
+
+        // Ask for Finder access up front rather than on the first drop.
+        _ = desktop.positionsNow()
+
+        if let demoPath = UserDefaults.standard.string(forKey: "CBDemoPath") {
+            let id = coordinator.createFence(title: "Demo")
+            coordinator.addItems([URL(fileURLWithPath: demoPath)], to: id)
+        }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        coordinator.restoreAllIcons()
+        store.saveNow()
+        return .terminateNow
+    }
+
+    // MARK: Menu bar
+
+    private func buildStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.button?.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "Clutter Buster")
+        let menu = NSMenu()
+        menu.addItem(withTitle: "New Fence", action: #selector(newFence), keyEquivalent: "n").target = self
+        menu.addItem(withTitle: "Show or Hide Toolbar", action: #selector(toggleToolbar), keyEquivalent: "t").target = self
+        menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Quit Clutter Buster", action: #selector(quit), keyEquivalent: "q").target = self
+        item.menu = menu
+        statusItem = item
+    }
+
+    @objc private func newFence() {
+        coordinator.createFence()
+    }
+
+    @objc private func toggleToolbar() {
+        guard let toolbar else { return }
+        if toolbar.isVisible { toolbar.hide() } else { toolbar.show() }
+    }
+
+    @objc private func openSettings() {
+        if settingsWindow == nil {
+            let view = SettingsView(onQuit: { NSApp.terminate(nil) }).environmentObject(store)
+            let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+            window.title = "Clutter Buster Settings"
+            window.styleMask = [.titled, .closable]
+            window.isReleasedWhenClosed = false
+            window.center()
+            settingsWindow = window
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    @objc private func quit() {
+        NSApp.terminate(nil)
+    }
+
+    private func showAccessAlert() {
+        guard !shownAccessAlert else { return }
+        shownAccessAlert = true
+        let alert = NSAlert()
+        alert.messageText = "Clutter Buster needs permission to control Finder"
+        alert.informativeText = "It uses Finder to hide desktop icons underneath your fences. Turn on Finder for Clutter Buster in System Settings > Privacy & Security > Automation, then reopen the app."
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Later")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn,
+           let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+}
