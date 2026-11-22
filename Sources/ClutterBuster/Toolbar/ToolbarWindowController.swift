@@ -5,25 +5,38 @@ struct ToolbarActions {
     var newFence: () -> Void
     var collapseAll: () -> Void
     var expandAll: () -> Void
+    var toggleFences: () -> Void
     var openSettings: () -> Void
 }
 
 /// Floating bar on the desktop with quick actions. Drag its background to move it.
+/// Buttons are icons with tooltips so the search field keeps its room as more are added.
 @MainActor
 final class ToolbarWindowController {
     let window = DesktopLevelWindow()
     private let store: FenceStore
     private let size = CGSize(width: 480, height: 44)
 
-    init(store: FenceStore, search: SearchController, actions: ToolbarActions) {
+    init(store: FenceStore, fences: FenceCoordinator, search: SearchController, actions: ToolbarActions) {
         self.store = store
-        let view = ToolbarView(search: search, actions: actions, onMove: { [weak window] delta, start in
+        let view = ToolbarView(fences: fences, search: search, actions: actions, onMove: { [weak window] delta, start in
             window?.setFrameOrigin(CGPoint(x: start.x + delta.width, y: start.y + delta.height))
-        }, currentOrigin: { [weak window] in window?.frame.origin ?? .zero }, onMoveEnded: { [weak store, weak window] in
-            store?.toolbarOrigin = window?.frame.origin
+        }, currentOrigin: { [weak window] in window?.frame.origin ?? .zero }, onMoveEnded: { [weak self] in
+            self?.keepOnScreen()
+            self?.store.toolbarOrigin = self?.window.frame.origin
         })
         window.contentView = FirstMouseHostingView(rootView: view)
         window.setFrame(CGRect(origin: clamped(store.toolbarOrigin ?? defaultOrigin), size: size), display: true)
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.keepOnScreen() }
+        }
+    }
+
+    private func keepOnScreen() {
+        let origin = clamped(window.frame.origin)
+        if origin != window.frame.origin { window.setFrameOrigin(origin) }
     }
 
     /// Keeps the whole toolbar on the screen it was saved on (or the main screen).
@@ -50,6 +63,7 @@ final class ToolbarWindowController {
 }
 
 private struct ToolbarView: View {
+    @ObservedObject var fences: FenceCoordinator
     let search: SearchController
     let actions: ToolbarActions
     let onMove: (CGSize, CGPoint) -> Void
@@ -78,9 +92,16 @@ private struct ToolbarView: View {
             .background(Capsule().fill(style.titleText.opacity(0.1)))
             .contentShape(Capsule())
             .onTapGesture { search.focus() }
-            ToolbarButton(systemImage: "plus", title: "New Fence", style: style, action: actions.newFence)
+            ToolbarButton(systemImage: "plus", help: "New fence", style: style, action: actions.newFence)
             ToolbarButton(systemImage: "rectangle.compress.vertical", help: "Collapse all fences", style: style, action: actions.collapseAll)
             ToolbarButton(systemImage: "rectangle.expand.vertical", help: "Expand all fences", style: style, action: actions.expandAll)
+            ToolbarButton(
+                systemImage: fences.fencesHidden ? "eye.slash" : "eye",
+                help: fences.fencesHidden ? "Show fences" : "Hide fences and show the Desktop as usual",
+                active: fences.fencesHidden,
+                style: style,
+                action: actions.toggleFences
+            )
             ToolbarButton(systemImage: "gearshape", help: "Settings", style: style, action: actions.openSettings)
         }
         .padding(.horizontal, 12)
@@ -110,6 +131,8 @@ private struct ToolbarButton: View {
     let systemImage: String
     var title: String?
     var help: String?
+    /// Drawn pressed, for a toggle that's on.
+    var active = false
     let style: ThemeStyle
     let action: () -> Void
 
@@ -123,7 +146,7 @@ private struct ToolbarButton: View {
             .foregroundStyle(style.titleText)
             .padding(.horizontal, title == nil ? 7 : 10)
             .frame(height: 26)
-            .background(Capsule().fill(style.titleControl))
+            .background(Capsule().fill(active ? style.titleText.opacity(0.32) : style.titleControl))
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)

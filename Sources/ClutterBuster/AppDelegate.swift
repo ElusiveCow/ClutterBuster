@@ -2,13 +2,14 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let store = FenceStore()
     private let desktop = DesktopIconService()
     private lazy var coordinator = FenceCoordinator(store: store, desktop: desktop)
     private var toolbar: ToolbarWindowController?
     private var search: SearchController?
     private var statusItem: NSStatusItem?
+    private var fencesMenuItem: NSMenuItem?
     private var settingsWindow: NSWindow?
     private var shownAccessAlert = false
     private var sigterm: DispatchSourceSignal?
@@ -22,10 +23,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let search = SearchController(store: store) { [weak self] in self?.toolbar?.window }
         search.reveal = { [weak self] url in self?.coordinator.revealInFinder(url) }
         self.search = search
-        let toolbar = ToolbarWindowController(store: store, search: search, actions: ToolbarActions(
+        let toolbar = ToolbarWindowController(store: store, fences: coordinator, search: search, actions: ToolbarActions(
             newFence: { [weak self] in self?.coordinator.createFenceWithSetup() },
             collapseAll: { [weak self] in self?.coordinator.setAllCollapsed(true) },
             expandAll: { [weak self] in self?.coordinator.setAllCollapsed(false) },
+            toggleFences: { [weak self] in self?.toggleFences() },
             openSettings: { [weak self] in self?.openSettings() }
         ))
         toolbar.show()
@@ -87,12 +89,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(withTitle: "Search…", action: #selector(openSearch), keyEquivalent: "f").target = self
         menu.addItem(withTitle: "New Fence", action: #selector(newFence), keyEquivalent: "n").target = self
+        let fencesItem = menu.addItem(withTitle: "Hide Fences", action: #selector(toggleFences), keyEquivalent: "")
+        fencesItem.target = self
+        fencesMenuItem = fencesItem
         menu.addItem(withTitle: "Show or Hide Toolbar", action: #selector(toggleToolbar), keyEquivalent: "t").target = self
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Clutter Buster", action: #selector(quit), keyEquivalent: "q").target = self
+        menu.delegate = self
         item.menu = menu
         statusItem = item
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        fencesMenuItem?.title = coordinator.fencesHidden ? "Show Fences" : "Hide Fences"
     }
 
     @objc private func openSearch() {
@@ -104,6 +114,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func newFence() {
         // Let the status menu finish closing so its click doesn't dismiss the setup card.
         DispatchQueue.main.async { [weak self] in self?.coordinator.createFenceWithSetup() }
+    }
+
+    @objc private func toggleFences() {
+        coordinator.setFencesHidden(!coordinator.fencesHidden)
     }
 
     @objc private func toggleToolbar() {

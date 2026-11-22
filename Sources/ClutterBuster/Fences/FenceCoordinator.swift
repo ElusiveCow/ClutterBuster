@@ -40,6 +40,10 @@ final class FenceCoordinator: ObservableObject {
         onOutsideClick: { [weak self] in self?.lowerRaisedFence() }
     )
 
+    /// True while Show/Hide Fences has every fence hidden and the Desktop showing its files
+    /// as usual. Kept across launches.
+    @Published private(set) var fencesHidden = UserDefaults.standard.bool(forKey: FenceCoordinator.fencesHiddenKey)
+    private static let fencesHiddenKey = "CBFencesHidden"
     /// False after `restoreAllToDesktop` until `hideAllFencedFiles`. Items added meanwhile
     /// stay visible on the Desktop.
     private(set) var hidesFencedFiles = true
@@ -124,6 +128,7 @@ final class FenceCoordinator: ObservableObject {
 
     @discardableResult
     func createFence(title: String = "New Fence") -> UUID {
+        setFencesHidden(false)
         let screen = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1200, height: 800)
         let size = CGSize(width: 420, height: 300)
         let offset = CGFloat(store.fences.count % 8) * 28
@@ -278,10 +283,36 @@ final class FenceCoordinator: ObservableObject {
         }
     }
 
+    /// Hides every fence and puts their Desktop files back in their spots, so the Desktop looks
+    /// as it would without Clutter Buster; or hides the files again and shows the fences.
+    func setFencesHidden(_ hidden: Bool) {
+        guard hidden != fencesHidden else { return }
+        fencesHidden = hidden
+        UserDefaults.standard.set(hidden, forKey: Self.fencesHiddenKey)
+        if hidden {
+            setup?.finish()
+            lowerRaisedFence()
+            closeSettings()
+            selectedItemID = nil
+            restoreAllToDesktop()
+            for controller in controllers.values { controller.window.orderOut(nil) }
+            Log.write("fences hidden; their Desktop files are back in their spots")
+        } else {
+            // Icons moved while the fences were away go back to where they were moved.
+            hideAllFencedFiles(recordPositions: true)
+            for fence in store.fences {
+                applyFrame(fence.id)
+                controllers[fence.id]?.window.orderFrontRegardless()
+            }
+            Log.write("fences shown")
+        }
+    }
+
     /// Brings a clicked fence above app windows until the next click elsewhere. A fence in
     /// its setup card already floats, and the card settles it.
     func raise(_ id: UUID) {
-        guard setup?.fenceID != id, let window = controllers[id]?.window else { return }
+        // A click already on its way when the fences were hidden would bring one back.
+        guard !fencesHidden, setup?.fenceID != id, let window = controllers[id]?.window else { return }
         if raisedFenceID != id {
             lowerRaisedFence()
             raisedFenceID = id
@@ -312,7 +343,7 @@ final class FenceCoordinator: ObservableObject {
         // Let a menu that triggered this finish closing first.
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
-                guard let self, self.store.fence(id) != nil, let window = self.controllers[id]?.window,
+                guard let self, !self.fencesHidden, self.store.fence(id) != nil, let window = self.controllers[id]?.window,
                       let content = window.contentView else { return }
                 self.closeSettings()
                 self.raise(id)
@@ -667,7 +698,8 @@ final class FenceCoordinator: ObservableObject {
     /// Runs at launch before any fence shows. Fenced Desktop files get hidden, which also
     /// moves layouts from versions that piled icons under each fence onto the hidden flag
     /// (their original positions are kept). Files Clutter Buster hid that are no longer in a
-    /// fence, say after a crash, are unhidden where they are.
+    /// fence, say after a crash, are unhidden where they are. With the fences hidden, fenced
+    /// files stay visible, and any left hidden go back to their spots.
     private func reconcileHiddenFiles() {
         let fenced = store.fences.flatMap(\.items).filter(\.isOnDesktop)
         let orphans = desktop.hiddenFiles.paths.subtracting(fenced.map(\.path))
@@ -678,6 +710,11 @@ final class FenceCoordinator: ObservableObject {
         if !UserDefaults.standard.bool(forKey: Self.migratedKey) {
             Log.write("launch: moving \(fenced.count) fenced Desktop file(s) from icon stacks to the hidden flag")
             UserDefaults.standard.set(true, forKey: Self.migratedKey)
+        }
+        if fencesHidden {
+            restoreAllToDesktop()
+            Log.write("launch: fences are hidden, so their \(fenced.count) Desktop file(s) stay visible")
+            return
         }
         hide(fenced)
         Log.write("launch: \(fenced.count) fenced Desktop file(s), \(desktop.hiddenFiles.paths.count) hidden by Clutter Buster")
@@ -747,7 +784,7 @@ final class FenceCoordinator: ObservableObject {
         let controller = FenceWindowController(fenceID: fence.id, coordinator: self)
         controllers[fence.id] = controller
         controller.window.setFrame(displayFrame(for: fence), display: true)
-        controller.window.orderFrontRegardless()
+        if !fencesHidden { controller.window.orderFrontRegardless() }
     }
 
     private func displayFrame(for fence: Fence) -> CGRect {
