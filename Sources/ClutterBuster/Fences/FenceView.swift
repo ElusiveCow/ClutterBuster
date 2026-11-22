@@ -35,15 +35,18 @@ struct FenceView: View {
                 if !fence.isCollapsed {
                     tabBar(fence, style: style, metrics: metrics)
                     GeometryReader { geo in
+                        let art = cornerArt(fence, style: style, area: geo.size, metrics: metrics)
                         ZStack(alignment: .bottomTrailing) {
                             ThemeBody(style: style, animate: animate)
                             ItemGrid(
                                 fence: fence,
                                 style: style,
                                 items: coordinator.displayedItems(fence, tab: tab),
-                                reservedBottom: cornerBand(style, area: geo.size, metrics: metrics)
+                                reservedBottom: art?.band ?? 0
                             )
-                            CornerArt(style: style, area: geo.size, animate: animate, minimumGrid: metrics.minimumGridHeight)
+                            if let art {
+                                CornerArt(layout: art, style: style, animate: animate)
+                            }
                         }
                         .frame(width: geo.size.width, height: geo.size.height)
                     }
@@ -469,11 +472,12 @@ struct FenceView: View {
         coordinator.renameTab(fenceID, tabID, to: tabDraft)
     }
 
-    /// Height along the bottom that tiles stay above so they never sit behind the corner art.
-    /// Without art the grid uses the full height.
-    private func cornerBand(_ style: ThemeStyle, area: CGSize, metrics: FenceMetrics) -> CGFloat {
-        guard let art = CornerArt.size(for: style, area: area, minimumGrid: metrics.minimumGridHeight) else { return 0 }
-        return art.height + CornerArt.padding + 4
+    /// The corner picture and the band along the bottom that tiles stay above, so they never
+    /// sit or scroll behind it. The grid above keeps at least one whole row of tiles at the
+    /// fence's text size. Without art the grid uses the full height.
+    private func cornerArt(_ fence: Fence, style: ThemeStyle, area: CGSize, metrics: FenceMetrics) -> CornerArtLayout? {
+        let oneRow = GridMetrics.oneRowHeight(width: area.width, columns: fence.iconsPerRow, textScale: metrics.scale)
+        return CornerArtLayout.make(fence: fence, style: style, area: area, minimumGrid: max(metrics.minimumGridHeight, oneRow))
     }
 
     private var moveGesture: some Gesture {

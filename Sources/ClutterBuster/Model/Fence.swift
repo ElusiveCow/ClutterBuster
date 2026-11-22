@@ -63,6 +63,8 @@ struct Fence: Codable, Identifiable {
     var textScale: Double = 1
     /// Overrides the theme's title font, size, weight, alignment and color.
     var titleStyle = TitleStyle()
+    /// The picture in the body's corner. Nil shows the theme's.
+    var cornerArt: CornerArtChoice?
 
     static let textScaleRange = 0.8...1.8
     static let textScaleStep = 0.1
@@ -116,7 +118,36 @@ extension Fence {
         tabsCollapsed = try container.decodeIfPresent(Bool.self, forKey: .tabsCollapsed) ?? false
         textScale = Self.clampedTextScale(try container.decodeIfPresent(Double.self, forKey: .textScale) ?? 1)
         titleStyle = (try? container.decodeIfPresent(TitleStyle.self, forKey: .titleStyle)) ?? TitleStyle()
+        cornerArt = (try? container.decodeIfPresent(CornerArtChoice.self, forKey: .cornerArt)) ?? nil
         normalizeTabs()
+    }
+}
+
+/// What a fence draws in its body's corner.
+enum CornerArtChoice: Codable, Equatable {
+    /// The theme's illustration, if it has one.
+    case theme
+    case none
+    /// A picture the user chose, cut out and saved by `CustomCornerArt` under this file name.
+    case custom(String)
+
+    /// Saved as one string: "theme", "none", or "custom:" and the file name.
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        switch raw {
+        case "none": self = .none
+        case _ where raw.hasPrefix("custom:"): self = .custom(String(raw.dropFirst("custom:".count)))
+        default: self = .theme
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .theme: try container.encode("theme")
+        case .none: try container.encode("none")
+        case .custom(let fileName): try container.encode("custom:" + fileName)
+        }
     }
 }
 

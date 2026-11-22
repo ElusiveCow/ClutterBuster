@@ -353,57 +353,76 @@ private struct RainbowBorder: View {
 
 // MARK: Corner
 
-/// The theme's corner illustration: pure decoration in the body's bottom-trailing corner.
-struct CornerArt: View {
-    let style: ThemeStyle
-    let area: CGSize
-    let animate: Bool
-    /// Height the grid above keeps for a row of icons.
-    var minimumGrid = FenceMetrics.baseMinimumGridHeight
+/// The picture in a fence body's bottom-trailing corner, the theme's or the fence's own, at
+/// the size it's drawn. The grid and the art both take their sizes from one of these, so
+/// tiles never sit or scroll behind the art.
+struct CornerArtLayout {
+    let image: NSImage
+    /// The theme's illustration rather than a custom picture; only it gets the theme's extras.
+    let isThemeArt: Bool
+    let size: CGSize
 
-    static let padding: CGFloat = 3
-    /// Width at an `artScale` of 1, and the tallest the art gets.
-    static let baseWidth: CGFloat = 130
-    static let maxHeight: CGFloat = 110
+    /// Height along the bottom that the grid stays above: the art, its bottom padding and a
+    /// small gap.
+    var band: CGFloat { size.height + CornerArt.padding + 4 }
 
-    /// Shrinks on small fences so the grid above it keeps room for a row of icons, and isn't
-    /// drawn at all when it would be too small to make out.
-    static func size(for style: ThemeStyle, area: CGSize, minimumGrid: CGFloat = FenceMetrics.baseMinimumGridHeight) -> CGSize? {
-        guard let name = style.cornerArt, let image = ThemeArt.image(name), image.size.width > 0 else { return nil }
-        let aspect = image.size.height / image.size.width
-        var width = min(baseWidth * style.artScale, area.width * 0.45)
+    /// Shrinks on small fences so the grid above keeps `minimumGrid`, and is nil when the art
+    /// would be too small to make out, or the fence shows none.
+    static func make(fence: Fence, style: ThemeStyle, area: CGSize, minimumGrid: CGFloat) -> CornerArtLayout? {
+        var picture: (image: NSImage, scale: CGFloat, isTheme: Bool)?
+        if case .custom(let fileName) = fence.cornerArt, let image = CustomCornerArt.image(fileName) {
+            picture = (image, CornerArt.customScale, false)
+        } else if fence.cornerArt != CornerArtChoice.none, let name = style.cornerArt, let image = ThemeArt.image(name) {
+            picture = (image, style.artScale, true)
+        }
+        guard let picture, picture.image.size.width > 0, picture.image.size.height > 0 else { return nil }
+        let aspect = picture.image.size.height / picture.image.size.width
+        var width = min(CornerArt.baseWidth * picture.scale, area.width * 0.45)
         var height = width * aspect
-        let maxHeight = min(Self.maxHeight, area.height - minimumGrid - padding)
+        let maxHeight = min(CornerArt.maxHeight, area.height - minimumGrid - CornerArt.padding)
         if height > maxHeight {
             height = maxHeight
             width = height / aspect
         }
         guard height >= 32 else { return nil }
-        return CGSize(width: width, height: height)
+        return CornerArtLayout(image: picture.image, isThemeArt: picture.isTheme, size: CGSize(width: width, height: height))
     }
+}
+
+/// The corner picture: pure decoration in the body's bottom-trailing corner.
+struct CornerArt: View {
+    let layout: CornerArtLayout
+    let style: ThemeStyle
+    let animate: Bool
+
+    static let padding: CGFloat = 3
+    /// Width at an `artScale` of 1, and the tallest the art gets.
+    static let baseWidth: CGFloat = 130
+    static let maxHeight: CGFloat = 110
+    /// A custom picture's width relative to `baseWidth`.
+    static let customScale: CGFloat = 1.1
 
     var body: some View {
-        if let name = style.cornerArt, let image = ThemeArt.image(name),
-           let size = Self.size(for: style, area: area, minimumGrid: minimumGrid) {
-            Image(nsImage: image)
-                .resizable()
-                .interpolation(style.theme == .arcade ? .none : .high)
-                .frame(width: size.width, height: size.height)
-                .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
-                .overlay {
-                    if style.theme == .robot { RobotBlink(animate: animate) }
+        let size = layout.size
+        Image(nsImage: layout.image)
+            .resizable()
+            .interpolation(layout.isThemeArt && style.theme == .arcade ? .none : .high)
+            .aspectRatio(contentMode: .fit)
+            .frame(width: size.width, height: size.height)
+            .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+            .overlay {
+                if layout.isThemeArt && style.theme == .robot { RobotBlink(animate: animate) }
+            }
+            .overlay(alignment: .topLeading) {
+                if layout.isThemeArt && style.particle == .steam {
+                    // Rises from the coffee in the Cozy Cafe illustration.
+                    ParticleEmitter(kind: .steam, running: animate)
+                        .frame(width: size.width * 0.3, height: size.height * 0.6)
+                        .offset(x: size.width * 0.48, y: -size.height * 0.5)
                 }
-                .overlay(alignment: .topLeading) {
-                    if style.particle == .steam {
-                        // Rises from the coffee in the Cozy Cafe illustration.
-                        ParticleEmitter(kind: .steam, running: animate)
-                            .frame(width: size.width * 0.3, height: size.height * 0.6)
-                            .offset(x: size.width * 0.48, y: -size.height * 0.5)
-                    }
-                }
-                .padding(Self.padding)
-                .allowsHitTesting(false)
-        }
+            }
+            .padding(Self.padding)
+            .allowsHitTesting(false)
     }
 }
 

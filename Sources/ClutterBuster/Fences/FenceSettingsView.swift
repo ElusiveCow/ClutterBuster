@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// A fence's settings, changed live: name, theme, Classic's color and transparency, and
 /// icons per row. With `showsMore`, also text size, title style and the tab strip. Drawn light on dark,
@@ -95,6 +96,9 @@ struct FenceSettingsForm: View {
 
             if showsMore {
                 textSizeSection(fence)
+                SettingsSection("Corner picture") {
+                    CornerPicturePicker(fence: fence)
+                }
                 SettingsSection("Title style") {
                     TitleStyleEditor(fenceID: fenceID)
                 }
@@ -141,6 +145,115 @@ struct FenceSettingsForm: View {
                     coordinator.setTabStrip(fenceID, rows: fence.tabRows, collapsed: !fence.tabsCollapsed)
                 }
                 .help("Shrink the tabs to a thin bar showing the current tab")
+            }
+        }
+    }
+}
+
+/// The theme's corner picture, none, or one of the user's own with its background removed.
+/// Choosing a picture opens a file panel; dropping one on the row works too.
+private struct CornerPicturePicker: View {
+    let fence: Fence
+
+    @EnvironmentObject private var coordinator: FenceCoordinator
+    @State private var dropTargeted = false
+
+    private enum Option: Hashable { case theme, none, custom }
+
+    var body: some View {
+        let working = coordinator.cornerArtInProgress.contains(fence.id)
+        let saved = CustomCornerArt.exists(for: fence.id) ? CustomCornerArt.image(CustomCornerArt.fileName(for: fence.id)) : nil
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Corner picture", selection: selection) {
+                Text("Theme").tag(Option.theme)
+                Text("None").tag(Option.none)
+                Text("Custom").tag(Option.custom)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .disabled(working)
+            HStack(spacing: 10) {
+                thumbnail(saved, working: working)
+                VStack(alignment: .leading, spacing: 4) {
+                    Chip(title: "Choose Picture\u{2026}", selected: false) { coordinator.chooseCornerArt(fence.id) }
+                        .disabled(working)
+                        .help("Pick a photo; its background is removed automatically")
+                    Text(status(working: working, saved: saved != nil))
+                        .font(.system(size: 10))
+                        .foregroundStyle(coordinator.cornerArtErrors[fence.id] == nil ? .white.opacity(0.5) : Color(hex: 0xFF9A8A))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(6)
+        .background(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor.opacity(dropTargeted ? 0.9 : 0), lineWidth: 1.5))
+        .padding(-6)
+        .dropDestination(for: URL.self) { urls, _ in
+            guard let url = urls.first(where: { (try? $0.resourceValues(forKeys: [.contentTypeKey]))?.contentType?.conforms(to: .image) == true }) else { return false }
+            coordinator.makeCornerArt(fence.id, from: url)
+            return true
+        } isTargeted: { dropTargeted = $0 }
+    }
+
+    private var selection: Binding<Option> {
+        Binding(
+            get: {
+                switch fence.cornerArt ?? .theme {
+                case .theme: .theme
+                case .none: .none
+                case .custom: .custom
+                }
+            },
+            set: { option in
+                switch option {
+                case .theme: coordinator.setCornerArt(fence.id, .theme)
+                case .none: coordinator.setCornerArt(fence.id, CornerArtChoice.none)
+                // Let the segmented control finish its click before a file panel opens.
+                case .custom: DispatchQueue.main.async { coordinator.useCustomCornerArt(fence.id) }
+                }
+            }
+        )
+    }
+
+    private func thumbnail(_ image: NSImage?, working: Bool) -> some View {
+        ZStack {
+            Checkerboard()
+            if working {
+                ProgressView().controlSize(.small)
+            } else if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .padding(3)
+            } else {
+                Image(systemName: "photo.badge.plus")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+        }
+        .frame(width: 52, height: 52)
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.white.opacity(0.15)))
+    }
+
+    private func status(working: Bool, saved: Bool) -> String {
+        if working { return "Removing the background\u{2026}" }
+        if let error = coordinator.cornerArtErrors[fence.id] { return error }
+        return saved ? "Or drop another picture here." : "Or drop a picture here."
+    }
+}
+
+/// The gray squares that stand for transparency behind a picture.
+private struct Checkerboard: View {
+    var body: some View {
+        Canvas { context, size in
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(white: 0.32)))
+            let square: CGFloat = 6
+            for row in 0..<Int(size.height / square) + 1 {
+                for column in 0..<Int(size.width / square) + 1 where (row + column) % 2 == 0 {
+                    context.fill(Path(CGRect(x: CGFloat(column) * square, y: CGFloat(row) * square, width: square, height: square)), with: .color(Color(white: 0.42)))
+                }
             }
         }
     }

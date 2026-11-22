@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ResizeEdges: OptionSet, Hashable {
     let rawValue: Int
@@ -27,6 +28,10 @@ final class FenceCoordinator: ObservableObject {
     private var settingsCloseObserver: NSObjectProtocol?
     /// The fence whose settings popover is open. Its hover controls stay up meanwhile.
     @Published private(set) var settingsFenceID: UUID?
+    /// Fences whose custom corner picture is being made.
+    @Published private(set) var cornerArtInProgress: Set<UUID> = []
+    /// Why the last picture chosen for a fence couldn't be used.
+    @Published private(set) var cornerArtErrors: [UUID: String] = [:]
     /// The fence brought above app windows by clicking it. It drops back to desktop level on
     /// the next click anywhere else.
     private(set) var raisedFenceID: UUID?
@@ -192,6 +197,7 @@ final class FenceCoordinator: ObservableObject {
         tabStripFrames[id] = nil
         tileFrames[id] = nil
         store.remove(id)
+        CustomCornerArt.delete(for: id)
     }
 
     func rename(_ id: UUID, to title: String) {
@@ -211,6 +217,68 @@ final class FenceCoordinator: ObservableObject {
     /// Nil makes the fence follow the global theme.
     func setTheme(_ id: UUID, _ theme: FenceTheme?) {
         store.update(id) { $0.theme = theme }
+    }
+
+    // MARK: Corner pictures
+
+    func setCornerArt(_ id: UUID, _ choice: CornerArtChoice) {
+        guard let fence = store.fence(id), (fence.cornerArt ?? .theme) != choice else { return }
+        store.update(id) { $0.cornerArt = choice == .theme ? nil : choice }
+        Log.write("corner picture of \"\(fence.title)\" set to \(choice)")
+    }
+
+    /// Shows the fence's own picture again, or asks for one if it doesn't have one yet.
+    func useCustomCornerArt(_ id: UUID) {
+        if CustomCornerArt.exists(for: id) {
+            setCornerArt(id, .custom(CustomCornerArt.fileName(for: id)))
+        } else {
+            chooseCornerArt(id)
+        }
+    }
+
+    func chooseCornerArt(_ id: UUID) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Choose a picture for the corner of the fence. Its background is removed automatically."
+        panel.prompt = "Use Picture"
+        // Above the fence, which floats while its settings are open.
+        panel.level = .modalPanel
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        makeCornerArt(id, from: url)
+    }
+
+    /// Cuts the subject of the picture at `url` out of its background in the background, then
+    /// shows it in the fence's corner.
+    func makeCornerArt(_ id: UUID, from url: URL) {
+        guard store.fence(id) != nil, !cornerArtInProgress.contains(id) else { return }
+        cornerArtInProgress.insert(id)
+        cornerArtErrors[id] = nil
+        Log.write("corner picture: making one for fence \(id) from \"\(url.lastPathComponent)\"")
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let result = Result { try CustomCornerArt.make(from: url, for: id) }
+            await self?.cornerArtMade(id, result)
+        }
+    }
+
+    private func cornerArtMade(_ id: UUID, _ result: Result<CustomCornerArt.Made, Error>) {
+        cornerArtInProgress.remove(id)
+        switch result {
+        case .success(let made):
+            Log.write("  \(made.cutOut ? "cut out the subject" : "no subject found, so framed the whole photo"); saved \(made.fileName)")
+            guard store.fence(id) != nil else {
+                // Deleted while the picture was being made.
+                CustomCornerArt.delete(for: id)
+                return
+            }
+            // The same file name may already be set; this redraws the fence with the new picture.
+            store.update(id) { $0.cornerArt = .custom(made.fileName) }
+        case .failure(let error):
+            Log.write("  failed: \(error.localizedDescription)")
+            cornerArtErrors[id] = error.localizedDescription
+        }
     }
 
     /// Sets how many rows of tabs show, within what the fence's height allows, or tucks the

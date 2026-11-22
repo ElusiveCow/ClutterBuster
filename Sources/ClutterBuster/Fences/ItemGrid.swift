@@ -37,6 +37,15 @@ struct GridMetrics {
     /// Every tile is this tall (room for a two-line label) so rows line up predictably.
     var tileHeight: CGFloat { Self.tileHeight(icon: icon, textScale: textScale) }
 
+    /// Height of a grid showing one whole row of tiles with their labels, with icons at the
+    /// smallest size they shrink to before the grid scrolls.
+    static func oneRowHeight(width: CGFloat, columns: Int, textScale: CGFloat) -> CGFloat {
+        let cell = max(1, (width - padding * 2) / CGFloat(max(1, columns)))
+        let widest = min(max(cell * 0.72, 20), 128, cell)
+        let floor = min(widest, max(32, cell * 0.45))
+        return topPadding + tileHeight(icon: floor, textScale: textScale) + bottomPadding
+    }
+
     private static func labelSize(icon: CGFloat, textScale: CGFloat) -> CGFloat {
         min(max(icon * 0.19, 9), 15) * textScale
     }
@@ -92,6 +101,15 @@ struct ItemGrid: View {
                         .padding(.bottom, GridMetrics.bottomPadding)
                     }
                     .scrollIndicators(.automatic)
+                    // Above corner art, a row cut off by the band fades out rather than ending
+                    // in a hard line right over the art. Rows that fit only lose padding.
+                    .mask {
+                        VStack(spacing: 0) {
+                            Color.black
+                            LinearGradient(colors: [.black, .black.opacity(reservedBottom > 0 ? 0 : 1)], startPoint: .top, endPoint: .bottom)
+                                .frame(height: GridMetrics.bottomPadding)
+                        }
+                    }
                     .onPreferenceChange(TileFramesKey.self) { coordinator.tileFrames[fence.id] = $0 }
                 }
             }
