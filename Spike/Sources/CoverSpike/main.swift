@@ -97,6 +97,7 @@ func coverFrame(for position: CGPoint) -> NSRect {
 final class CoverView: NSView {
     let item: DesktopItem
     var debug: Bool { didSet { needsDisplay = true } }
+    var showPlaceholder = false { didSet { needsDisplay = true } }
     var onUserMoved: () -> Void = {}
 
     private var mouseStart: NSPoint = .zero
@@ -121,6 +122,11 @@ final class CoverView: NSView {
             NSColor.systemRed.setStroke()
             shape.lineWidth = 2
             shape.stroke()
+            return
+        }
+        guard showPlaceholder else {
+            NSColor.systemTeal.setFill()
+            shape.fill()
             return
         }
         NSColor(calibratedRed: 0.12, green: 0.16, blue: 0.24, alpha: 1).setFill()
@@ -239,6 +245,11 @@ final class SpikeController: NSObject {
         log("Debug overlay \(view.debug ? "on" : "off")")
     }
 
+    @objc private func togglePlaceholder() {
+        view.showPlaceholder.toggle()
+        log("Placeholder icon \(view.showPlaceholder ? "on" : "off")")
+    }
+
     @objc private func quit() { NSApp.terminate(nil) }
 
     private func reposition(reason: String, position: CGPoint? = nil) {
@@ -264,6 +275,7 @@ final class SpikeController: NSObject {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Snap cover back onto icon", action: #selector(resetToIcon), keyEquivalent: "r").target = self
         menu.addItem(withTitle: "Toggle debug overlay", action: #selector(toggleDebug), keyEquivalent: "d").target = self
+        menu.addItem(withTitle: "Toggle placeholder icon", action: #selector(togglePlaceholder), keyEquivalent: "p").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(quit), keyEquivalent: "q").target = self
         statusItem.menu = menu
