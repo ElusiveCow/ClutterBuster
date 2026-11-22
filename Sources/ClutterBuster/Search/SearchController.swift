@@ -23,8 +23,9 @@ private final class DropdownPanel: NSPanel {
 final class SearchController: NSObject, NSTextFieldDelegate {
     let service: SearchService
     weak var field: NSTextField?
-    /// Off only for scripted demos, where the app launches without becoming active.
-    var closesOnOutsideClick = true
+    /// Scripted demos launch while another app is in front, and it takes focus straight back.
+    /// Until this time passes, clicking elsewhere or switching apps leaves the dropdown open.
+    var holdsOpenUntil = Date.distantPast
 
     private let panel = DropdownPanel()
     private let width: CGFloat = 560
@@ -35,7 +36,7 @@ final class SearchController: NSObject, NSTextFieldDelegate {
     private lazy var outsideClicks = OutsideClickMonitor(
         inside: { [weak self] in [self?.toolbarWindow(), self?.panel].compactMap { $0 } },
         onOutsideClick: { [weak self] in
-            guard let self, self.closesOnOutsideClick else { return }
+            guard let self, !self.isHeldOpen else { return }
             self.close()
         }
     )
@@ -58,7 +59,8 @@ final class SearchController: NSObject, NSTextFieldDelegate {
             forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.closesOnOutsideClick else { return }
+                guard let self, self.isOpen, !self.isHeldOpen else { return }
+                Log.write("search: app deactivated")
                 self.close()
             }
         }
@@ -83,10 +85,16 @@ final class SearchController: NSObject, NSTextFieldDelegate {
 
     /// Called by the field when it gains focus.
     func fieldDidFocus() {
+        Log.write("search: field focused")
         outsideClicks.start()
     }
 
+    /// True while the field is being edited or the dropdown is showing.
+    private var isOpen: Bool { panel.isVisible || field?.currentEditor() != nil }
+    private var isHeldOpen: Bool { Date() < holdsOpenUntil }
+
     func close() {
+        if isOpen { Log.write("search: closed") }
         outsideClicks.stop()
         panel.orderOut(nil)
         service.reset()

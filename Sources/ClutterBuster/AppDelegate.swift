@@ -49,7 +49,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if let demoSearch = UserDefaults.standard.string(forKey: "CBDemoSearch") {
-            search.closesOnOutsideClick = false
+            // Long enough for a screenshot; after that it closes like any other search.
+            search.holdsOpenUntil = Date().addingTimeInterval(8)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.search?.focus(query: demoSearch)
             }
