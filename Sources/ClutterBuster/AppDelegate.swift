@@ -11,11 +11,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
     private var shownAccessAlert = false
+    private var sigterm: DispatchSourceSignal?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.write("launched with \(store.fences.count) fences")
         desktop.onAccessDenied = { [weak self] in self?.showAccessAlert() }
         coordinator.start()
+        quitOnSIGTERM()
 
         let search = SearchController(store: store) { [weak self] in self?.toolbar?.window }
         search.reveal = { [weak self] url in self?.coordinator.revealInFinder(url) }
@@ -62,6 +64,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator.restoreAllToDesktop()
         store.saveNow()
         return .terminateNow
+    }
+
+    /// `kill` and `killall` quit like the Quit command, so fenced files don't stay hidden
+    /// until the next launch.
+    private func quitOnSIGTERM() {
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler {
+            Log.write("SIGTERM: quitting")
+            NSApp.terminate(nil)
+        }
+        source.resume()
+        sigterm = source
     }
 
     // MARK: Menu bar
