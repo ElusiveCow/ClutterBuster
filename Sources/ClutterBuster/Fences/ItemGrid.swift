@@ -1,10 +1,12 @@
 import SwiftUI
 
 /// Icon sizes for a fence. The number of icons per row is fixed, so icons grow and shrink
-/// with the fence's width, within a minimum and maximum size.
+/// with the fence: as large as the width allows, then smaller when the fence is too short to
+/// show every row. Below a floor the grid scrolls instead of shrinking further.
 struct GridMetrics {
     static let padding: CGFloat = 10
     static let topPadding: CGFloat = 8
+    static let bottomPadding: CGFloat = 8
     static let rowSpacing: CGFloat = 4
 
     let columns: Int
@@ -13,17 +15,32 @@ struct GridMetrics {
     let label: CGFloat
     let showLabels: Bool
 
-    init(width: CGFloat, columns: Int) {
+    init(width: CGFloat, columns: Int, height: CGFloat? = nil, itemCount: Int = 0) {
         self.columns = max(1, columns)
         cell = max(1, (width - Self.padding * 2) / CGFloat(self.columns))
-        icon = min(max(cell * 0.62, 20), 128, cell)
-        label = min(max(icon * 0.19, 9), 15)
+        let widest = min(max(cell * 0.72, 20), 128, cell)
+        var icon = widest
+        if let height, itemCount > 0 {
+            let rows = CGFloat((itemCount + self.columns - 1) / self.columns)
+            let available = height - Self.topPadding - Self.bottomPadding - (rows - 1) * Self.rowSpacing
+            let floor = min(widest, max(32, cell * 0.45))
+            while icon > floor, rows * Self.tileHeight(icon: icon) > available { icon -= 1 }
+        }
+        self.icon = icon
+        label = Self.labelSize(icon: icon)
         showLabels = icon >= 30
     }
 
     /// Every tile is this tall (room for a two-line label) so rows line up predictably.
-    var tileHeight: CGFloat {
-        icon + 8 + (showLabels ? 3 + (label * 1.25).rounded(.up) * 2 : 0)
+    var tileHeight: CGFloat { Self.tileHeight(icon: icon) }
+
+    private static func labelSize(icon: CGFloat) -> CGFloat {
+        min(max(icon * 0.19, 9), 15)
+    }
+
+    private static func tileHeight(icon: CGFloat) -> CGFloat {
+        let label = labelSize(icon: icon)
+        return icon + 8 + (icon >= 30 ? 3 + (label * 1.25).rounded(.up) * 2 : 0)
     }
 }
 
@@ -40,8 +57,8 @@ struct ItemGrid: View {
 
     var body: some View {
         GeometryReader { geo in
-            let metrics = GridMetrics(width: geo.size.width, columns: fence.iconsPerRow)
             let height = max(geo.size.height - reservedBottom, 0)
+            let metrics = GridMetrics(width: geo.size.width, columns: fence.iconsPerRow, height: height, itemCount: items.count)
             Group {
                 if items.isEmpty {
                     VStack(spacing: 6) {
@@ -68,7 +85,7 @@ struct ItemGrid: View {
                         }
                         .padding(.horizontal, GridMetrics.padding)
                         .padding(.top, GridMetrics.topPadding)
-                        .padding(.bottom, 8)
+                        .padding(.bottom, GridMetrics.bottomPadding)
                     }
                     .scrollIndicators(.automatic)
                     .onPreferenceChange(TileFramesKey.self) { coordinator.tileFrames[fence.id] = $0 }

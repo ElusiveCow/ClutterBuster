@@ -16,6 +16,7 @@ struct FenceView: View {
     @State private var editingTabID: UUID?
     @State private var tabDraft = ""
     @FocusState private var tabFieldFocused: Bool
+    @State private var hovered = false
 
     private let corner: CGFloat = 12
 
@@ -54,7 +55,15 @@ struct FenceView: View {
                         .allowsHitTesting(false)
                 }
             }
-            .overlay { ResizeHandles(fenceID: fenceID, isCollapsed: fence.isCollapsed) }
+            .overlay {
+                ResizeHandles(
+                    fenceID: fenceID,
+                    isCollapsed: fence.isCollapsed,
+                    showGrip: hovered || coordinator.interacting.contains(fenceID),
+                    gripColor: style.bodySecondary
+                )
+            }
+            .onHover { hovered = $0 }
             .dropDestination(for: URL.self) { urls, _ in
                 coordinator.addItems(urls, to: fenceID)
                 return true
