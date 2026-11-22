@@ -17,6 +17,10 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/ClutterBuster"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# Theme illustrations; the app skips any that are missing.
+if [[ -d Resources/Themes ]]; then
+    cp -R Resources/Themes "$APP/Contents/Resources/Themes"
+fi
 
 # Sign by hash so a duplicate certificate with the same name can't make codesign ambiguous.
 IDENTITY_HASH="$(security find-identity -p codesigning 2>/dev/null \
