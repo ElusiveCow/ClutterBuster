@@ -39,6 +39,20 @@ final class HiddenFiles {
         return (try? url.resourceValues(forKeys: [.isHiddenKey]).isHidden) == true
     }
 
+    /// Clears the hidden flag a copy inherits from a file Clutter Buster hid. The copy isn't
+    /// fenced, so it never goes in the ledger.
+    nonisolated static func showCopy(_ url: URL) {
+        guard isHidden(url) else { return }
+        var url = url
+        var values = URLResourceValues()
+        values.isHidden = false
+        do {
+            try url.setResourceValues(values)
+        } catch {
+            Log.write("hidden flag: couldn't unhide the copy \"\(url.lastPathComponent)\": \(error.localizedDescription)")
+        }
+    }
+
     /// Hides files that are visible now and records them. A file that's already hidden stays
     /// out of the ledger unless Clutter Buster hid it. Returns the paths it newly hid.
     @discardableResult

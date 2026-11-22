@@ -129,7 +129,8 @@ struct ItemTile: View {
 
     var body: some View {
         let exists = FileManager.default.fileExists(atPath: item.path)
-        let selected = coordinator.selectedItemID == item.id
+        // A folder under a drag looks selected, like a Finder drop target.
+        let selected = coordinator.selectedItemID == item.id || coordinator.folderDropTargetID == item.id
         VStack(spacing: 3) {
             ItemIcon(path: item.path, size: metrics.icon)
                 .padding(3)

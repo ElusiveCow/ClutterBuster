@@ -23,6 +23,10 @@ final class FenceCoordinator: ObservableObject {
     @Published private(set) var interacting: Set<UUID> = []
     /// The item tile last clicked once, shown highlighted like a selected Finder icon.
     @Published var selectedItemID: UUID?
+    /// The folder tile a drag is over, highlighted like a Finder drop target.
+    @Published var folderDropTargetID: UUID?
+    /// Fence items just dropped on a folder tile, which `itemDragEnded` leaves alone.
+    private var droppedIntoFolder: Set<UUID> = []
     private var setup: FenceSetupController?
     private var settingsPopover: NSPopover?
     private var settingsCloseObserver: NSObjectProtocol?
@@ -613,6 +617,10 @@ final class FenceCoordinator: ObservableObject {
     /// fence it moves there; over open desktop it leaves the fence and its icon lands under
     /// the mouse. Anywhere else (its own fence, the toolbar, an app window) nothing changes.
     func itemDragEnded(_ itemID: UUID, from sourceID: UUID, at point: CGPoint, operation: NSDragOperation) {
+        if droppedIntoFolder.remove(itemID) != nil {
+            Log.write("drag end: item \(itemID) was dropped on a folder tile")
+            return
+        }
         guard let source = store.fence(sourceID),
               let item = source.items.first(where: { $0.id == itemID }) else {
             Log.write("drag end: item \(itemID) no longer in fence \(sourceID)")
@@ -673,6 +681,123 @@ final class FenceCoordinator: ObservableObject {
         }
     }
 
+    // MARK: Dropping into folders
+
+    /// The fenced item with this ID, in whichever fence holds it.
+    func fencedItem(_ itemID: UUID) -> FenceItem? {
+        store.fences.lazy.compactMap { $0.items.first { $0.id == itemID } }.first
+    }
+
+    private struct FolderDropJob {
+        let source: URL
+        /// Fence items for the source path, from any fence.
+        let fenced: [FenceItem]
+        /// Clutter Buster hid the source, so a copy inherits a flag that isn't its own.
+        let wasHidden: Bool
+    }
+
+    /// Moves files dropped on a folder tile into its folder, or with `copy` copies them, as
+    /// Finder does. A moved file leaves every fence it was in; a fenced Desktop file is
+    /// unhidden first, which also takes it out of the ledger. A copy of a fenced file shows
+    /// on its own and the original stays put. Problems are shown together in one alert.
+    func dropIntoFolder(_ urls: [URL], folder: URL, copy: Bool, draggedItemID: UUID? = nil) {
+        if let draggedItemID { droppedIntoFolder.insert(draggedItemID) }
+        let folder = folder.standardizedFileURL
+        Log.write("folder drop: \(copy ? "copy" : "move") \(urls.count) item(s) into \"\(folder.path)\"")
+        var failures: [String] = []
+        var jobs: [FolderDropJob] = []
+        for url in urls.map(\.standardizedFileURL) {
+            if let problem = FolderDrop.problem(putting: url, into: folder) {
+                Log.write("  refused: \(problem)")
+                failures.append(problem)
+                continue
+            }
+            if !copy, url.deletingLastPathComponent().path == folder.path {
+                Log.write("  \"\(url.lastPathComponent)\" is already in that folder, no change")
+                continue
+            }
+            let fenced = store.fences.flatMap(\.items).filter { $0.path == url.path }
+            let job = FolderDropJob(source: url, fenced: fenced, wasHidden: desktop.hiddenFiles.paths.contains(url.path))
+            // Otherwise the file would stay hidden in its new folder. Its icon is leaving the
+            // Desktop, so it isn't put back in its spot first.
+            if !copy { unhide(fenced, placing: false) }
+            jobs.append(job)
+        }
+        guard !jobs.isEmpty else {
+            showFolderDropFailures(failures, folder: folder, copy: copy)
+            return
+        }
+        // Copying a big folder takes a while; the fences stay responsive meanwhile.
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let results = jobs.map { job in
+                Result {
+                    let destination = try FolderDrop.transfer(job.source, into: folder, copy: copy)
+                    if copy, job.wasHidden { HiddenFiles.showCopy(destination) }
+                    return destination
+                }
+            }
+            await self?.folderDropFinished(jobs, results, folder: folder, copy: copy, failures: failures)
+        }
+    }
+
+    private func folderDropFinished(_ jobs: [FolderDropJob], _ results: [Result<URL, Error>], folder: URL, copy: Bool, failures: [String]) {
+        var failures = failures
+        for (job, result) in zip(jobs, results) {
+            switch result {
+            case .success(let destination):
+                Log.write("  \(copy ? "copied" : "moved") \"\(job.source.path)\" to \"\(destination.path)\"")
+                if !copy { forgetMovedPath(job.source.path, now: destination.path) }
+            case .failure(let error):
+                Log.write("  couldn't \(copy ? "copy" : "move") \"\(job.source.lastPathComponent)\": \(error.localizedDescription)")
+                failures.append(error.localizedDescription)
+                // It's still where it was and still fenced.
+                if !copy { hide(job.fenced) }
+            }
+        }
+        showFolderDropFailures(failures, folder: folder, copy: copy)
+    }
+
+    /// After a move: the old path leaves every fence, and fenced files inside a moved folder
+    /// follow it to its new place.
+    private func forgetMovedPath(_ old: String, now new: String) {
+        for fence in store.fences {
+            let leaving = fence.items.filter { $0.path == old }
+            let inside = fence.items.contains { $0.path.hasPrefix(old + "/") }
+            guard !leaving.isEmpty || inside else { continue }
+            if !leaving.isEmpty { Log.write("  removed \"\((old as NSString).lastPathComponent)\" from \"\(fence.title)\"") }
+            if leaving.contains(where: { $0.id == selectedItemID }) { selectedItemID = nil }
+            store.update(fence.id) { fence in
+                fence.items.removeAll { $0.path == old }
+                for index in fence.items.indices where fence.items[index].path.hasPrefix(old + "/") {
+                    fence.items[index].path = new + fence.items[index].path.dropFirst(old.count)
+                }
+            }
+        }
+    }
+
+    private func showFolderDropFailures(_ failures: [String], folder: URL, copy: Bool) {
+        guard !failures.isEmpty else { return }
+        let folderName = FileManager.default.displayName(atPath: folder.path)
+        let what = failures.count == 1 ? "an item" : "\(failures.count) items"
+        // Not inside the drop, which would keep the drag image on screen behind the alert.
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Couldn't \(copy ? "copy" : "move") \(what) into \u{201C}\(folderName)\u{201D}"
+            alert.informativeText = failures.joined(separator: "\n\n")
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+        }
+    }
+
+    /// Opens a folder tile's folder in Finder when a drag rests on it, so the drag can go on
+    /// into a subfolder. The fence stays where it is, back under app windows.
+    func springOpen(_ item: FenceItem) {
+        Log.write("spring-loading: opening \"\(item.finderName)\" in Finder")
+        lowerRaisedFence()
+        NSWorkspace.shared.open(item.url)
+    }
+
     func open(_ item: FenceItem) {
         // The opened app comes forward; the fence goes back under it.
         lowerRaisedFence()
@@ -718,12 +843,13 @@ final class FenceCoordinator: ObservableObject {
 
     /// Puts the Desktop icons of items leaving a fence at `positions` (keyed by Finder name),
     /// or back at their original positions, then unhides them. Finder moves hidden icons, so
-    /// each one shows up in its spot. Posts `clutterBusterDidUnhideFiles`.
-    func unhide(_ items: [FenceItem], at positions: [String: CGPoint] = [:]) {
+    /// each one shows up in its spot. With `placing` false the icons stay where they are, for
+    /// files about to leave the Desktop. Posts `clutterBusterDidUnhideFiles`.
+    func unhide(_ items: [FenceItem], at positions: [String: CGPoint] = [:], placing: Bool = true) {
         let items = items.filter(\.isOnDesktop)
         guard !items.isEmpty else { return }
         var moves: [String: CGPoint] = [:]
-        for item in items {
+        for item in items where placing {
             let wasHidden = desktop.hiddenFiles.paths.contains(item.path) || revealed.contains(item.path)
             if let target = positions[item.finderName] ?? (wasHidden ? item.originalDesktopPosition : nil) {
                 moves[item.finderName] = target

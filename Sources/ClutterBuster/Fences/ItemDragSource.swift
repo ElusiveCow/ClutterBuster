@@ -8,7 +8,8 @@ extension NSPasteboard.PasteboardType {
 }
 
 /// Handles clicks, drags and the context menu for one item tile. A click selects the item
-/// and a double-click opens it; a drag carries it to the desktop or to another fence.
+/// and a double-click opens it; a drag carries it to the desktop or to another fence. A
+/// folder's tile also takes drops into the folder.
 struct ItemDragSource: NSViewRepresentable {
     let item: FenceItem
     let fenceID: UUID
@@ -32,6 +33,7 @@ struct ItemDragSource: NSViewRepresentable {
         view.iconSize = iconSize
         view.coordinator = coordinator
         view.toolTip = toolTip
+        view.isFolder = FolderDrop.isFolder(item.path)
     }
 }
 
@@ -40,9 +42,19 @@ final class ItemDragView: NSView, NSDraggingSource {
     var fenceID: UUID?
     var iconSize: CGFloat = 48
     weak var coordinator: FenceCoordinator?
+    /// Only folder tiles take drops. Anywhere else in the fence a drop adds to the fence.
+    var isFolder = false {
+        didSet {
+            guard isFolder != oldValue else { return }
+            if isFolder { registerForDraggedTypes([.fileURL, .clutterBusterItem]) } else { unregisterDraggedTypes() }
+        }
+    }
 
     private var mouseDownEvent: NSEvent?
     private var isDragging = false
+    private var springTimer: Timer?
+    /// How long a drag rests on a folder tile before the folder opens in Finder.
+    private static let springDelay: TimeInterval = 1
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -80,8 +92,9 @@ final class ItemDragView: NSView, NSDraggingSource {
         }
     }
 
+    // Move and copy are for folder tiles, which are the only views that accept this drag.
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-        context == .withinApplication ? .generic : []
+        context == .withinApplication ? [.generic, .move, .copy] : []
     }
 
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
@@ -90,6 +103,110 @@ final class ItemDragView: NSView, NSDraggingSource {
         guard let item, let fenceID else { return }
         let mouse = NSEvent.mouseLocation
         coordinator?.itemDragEnded(item.id, from: fenceID, at: mouse, operation: operation)
+    }
+
+    // MARK: Dropping into the folder
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        hover(sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        hover(sender)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        endHover()
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        endHover()
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        endHover()
+        let operation = dropOperation(sender)
+        guard let item, let coordinator, operation != [], let dragged = draggedItems(sender) else { return false }
+        self.dragged = nil
+        coordinator.dropIntoFolder(dragged.urls, folder: item.url, copy: operation == .copy, draggedItemID: dragged.itemID)
+        return true
+    }
+
+    /// Highlights the tile while it would take the drop, and opens the folder in Finder once
+    /// the drag has rested on it for `springDelay`.
+    private func hover(_ sender: NSDraggingInfo) -> NSDragOperation {
+        let operation = dropOperation(sender)
+        guard operation != [], let item else {
+            endHover()
+            return []
+        }
+        if coordinator?.folderDropTargetID != item.id {
+            coordinator?.folderDropTargetID = item.id
+            springTimer?.invalidate()
+            let timer = Timer(timeInterval: Self.springDelay, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let item = self.item, self.coordinator?.folderDropTargetID == item.id else { return }
+                    self.coordinator?.springOpen(item)
+                }
+            }
+            // A drag that started in a fence runs the event-tracking run loop mode.
+            RunLoop.main.add(timer, forMode: .common)
+            springTimer = timer
+        }
+        return operation
+    }
+
+    private func endHover() {
+        springTimer?.invalidate()
+        springTimer = nil
+        if let item, coordinator?.folderDropTargetID == item.id { coordinator?.folderDropTargetID = nil }
+    }
+
+    /// Move, or copy with Option held or across volumes, as Finder decides. A folder dropped
+    /// on its own tile isn't taken.
+    private func dropOperation(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard let item, isFolder, let dragged = draggedItems(sender), !dragged.urls.isEmpty,
+              dragged.itemID != item.id, !dragged.urls.contains(where: { $0.standardizedFileURL.path == item.path })
+        else { return [] }
+        // Holding Option narrows the mask to copy; Command narrows it to generic, a move.
+        let mask = sender.draggingSourceOperationMask
+        if mask.contains(.move), !NSEvent.modifierFlags.contains(.option), dragged.sameVolume { return .move }
+        if mask.contains(.copy) { return .copy }
+        if mask.contains(.generic) || mask.contains(.move) { return .move }
+        return []
+    }
+
+    private struct DraggedItems {
+        let sequence: Int
+        let urls: [URL]
+        /// Set when a fence item is dragged from a tile.
+        let itemID: UUID?
+        let sameVolume: Bool
+    }
+
+    /// Read once per drag, since AppKit asks for the operation over and over during a hover.
+    private var dragged: DraggedItems?
+
+    /// Files from Finder, or a fence item dragged from a tile.
+    private func draggedItems(_ sender: NSDraggingInfo) -> DraggedItems? {
+        if let dragged, dragged.sequence == sender.draggingSequenceNumber { return dragged }
+        let pasteboard = sender.draggingPasteboard
+        var urls: [URL] = []
+        var itemID: UUID?
+        if let id = pasteboard.string(forType: .clutterBusterItem).flatMap(UUID.init(uuidString:)) {
+            guard let fenced = coordinator?.fencedItem(id) else { return nil }
+            urls = [fenced.url]
+            itemID = id
+        } else {
+            urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        }
+        let folder = item?.url ?? URL(fileURLWithPath: "/")
+        let read = DraggedItems(
+            sequence: sender.draggingSequenceNumber, urls: urls, itemID: itemID,
+            sameVolume: urls.allSatisfy { FolderDrop.onSameVolume($0, folder) }
+        )
+        dragged = read
+        return read
     }
 
     // MARK: Context menu
