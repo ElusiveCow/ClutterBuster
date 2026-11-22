@@ -10,8 +10,12 @@ struct ResizeHandles: View {
     var gripColor: Color = .white.opacity(0.7)
 
     private let edge: CGFloat = 10
-    /// Kept thin so it doesn't eat into the title bar, which moves the fence.
-    private let topEdge: CGFloat = 5
+    /// The top edge, top corners and the sides beside the title bar stay thin so they don't
+    /// cover the title bar's ⋯ and collapse buttons, or its drag-to-move area.
+    private let thin: CGFloat = 4
+    private let topCorner: CGFloat = 8
+    /// Tall enough to clear the title bar at larger text sizes.
+    private let titleZone: CGFloat = 44
     private let corner: CGFloat = 24
 
     var body: some View {
@@ -19,20 +23,25 @@ struct ResizeHandles: View {
             let w = geo.size.width
             let h = geo.size.height
             ZStack {
-                if !isCollapsed {
+                if isCollapsed {
+                    handle(.left).frame(width: thin, height: h).position(x: thin / 2, y: h / 2)
+                    handle(.right).frame(width: thin, height: h).position(x: w - thin / 2, y: h / 2)
+                } else {
                     ResizeGrip(color: gripColor)
                         .opacity(showGrip ? 1 : 0)
                         .animation(.easeOut(duration: 0.15), value: showGrip)
                         .position(x: w - 9, y: h - 9)
                         .allowsHitTesting(false)
-                }
-                handle(.left).frame(width: edge, height: max(0, h - corner * 2)).position(x: edge / 2, y: h / 2)
-                handle(.right).frame(width: edge, height: max(0, h - corner * 2)).position(x: w - edge / 2, y: h / 2)
-                if !isCollapsed {
-                    handle(.top).frame(width: max(0, w - corner * 2), height: topEdge).position(x: w / 2, y: topEdge / 2)
+                    let side = max(0, h - titleZone - corner)
+                    // Beside the title bar, the sides are thin; below it they're full width.
+                    handle(.left).frame(width: thin, height: max(0, titleZone - topCorner)).position(x: thin / 2, y: (titleZone + topCorner) / 2)
+                    handle(.right).frame(width: thin, height: max(0, titleZone - topCorner)).position(x: w - thin / 2, y: (titleZone + topCorner) / 2)
+                    handle(.left).frame(width: edge, height: side).position(x: edge / 2, y: titleZone + side / 2)
+                    handle(.right).frame(width: edge, height: side).position(x: w - edge / 2, y: titleZone + side / 2)
+                    handle(.top).frame(width: max(0, w - topCorner * 2), height: thin).position(x: w / 2, y: thin / 2)
                     handle(.bottom).frame(width: max(0, w - corner * 2), height: edge).position(x: w / 2, y: h - edge / 2)
-                    handle([.top, .left]).frame(width: corner, height: corner).position(x: corner / 2, y: corner / 2)
-                    handle([.top, .right]).frame(width: corner, height: corner).position(x: w - corner / 2, y: corner / 2)
+                    handle([.top, .left]).frame(width: topCorner, height: topCorner).position(x: topCorner / 2, y: topCorner / 2)
+                    handle([.top, .right]).frame(width: topCorner, height: topCorner).position(x: w - topCorner / 2, y: topCorner / 2)
                     handle([.bottom, .left]).frame(width: corner, height: corner).position(x: corner / 2, y: h - corner / 2)
                     handle([.bottom, .right]).frame(width: corner, height: corner).position(x: w - corner / 2, y: h - corner / 2)
                 }
