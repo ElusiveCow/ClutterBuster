@@ -8,15 +8,6 @@ enum TitleFont: Hashable, Codable {
 
     static let builtIn: [TitleFont] = [.system, .rounded, .serif, .monospaced]
 
-    init(design: Font.Design) {
-        switch design {
-        case .rounded: self = .rounded
-        case .serif: self = .serif
-        case .monospaced: self = .monospaced
-        default: self = .system
-        }
-    }
-
     var name: String {
         switch self {
         case .system: "System"
@@ -148,7 +139,7 @@ struct TitleStyle: Codable, Equatable {
     func resolved(on theme: ThemeStyle, scale: CGFloat) -> ResolvedTitle {
         let size = CGFloat(pointSize) * scale
         let weight = weight ?? theme.titleWeight
-        let font = font ?? TitleFont(design: theme.titleDesign)
+        let font = font ?? theme.titleFont
         let custom = color.flatMap { Color(rgbHex: $0) }
         return ResolvedTitle(
             font: Self.font(font, size: size, weight: weight),

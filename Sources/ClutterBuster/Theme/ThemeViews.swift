@@ -182,27 +182,38 @@ struct BodyPattern: View {
                     row += 1
                 }
 
-            case .sandRakes:
-                var rakes = context
-                let center = CGPoint(x: size.width * 0.2, y: size.height * 0.3)
-                var y: CGFloat = 3
-                while y < size.height {
-                    var line = Path()
-                    line.move(to: CGPoint(x: 0, y: y))
-                    var x: CGFloat = 0
-                    while x <= size.width + 8 {
-                        line.addLine(to: CGPoint(x: x, y: y + sin(x / 50) * 1.5))
-                        x += 8
+            case .circuit:
+                // Faint traces that run sideways, turn up or down at 45 degrees, and end in a pad.
+                let trace = Color(hex: 0x6E9BD6)
+                let count = max(4, Int(size.width * size.height / 9000))
+                for _ in 0..<count {
+                    var point = CGPoint(x: random.next() * size.width, y: random.next() * size.height)
+                    var path = Path()
+                    path.move(to: point)
+                    let direction: CGFloat = random.next() > 0.5 ? 1 : -1
+                    for segment in 0..<3 {
+                        let length = 14 + random.next() * 40
+                        if segment == 1 {
+                            let rise: CGFloat = random.next() > 0.5 ? 1 : -1
+                            point = CGPoint(x: point.x + direction * length * 0.6, y: point.y + rise * length * 0.6)
+                        } else {
+                            point = CGPoint(x: point.x + direction * length, y: point.y)
+                        }
+                        path.addLine(to: point)
                     }
-                    rakes.stroke(line, with: .color(ink.opacity(0.13)), lineWidth: 0.8)
-                    y += 6
+                    context.stroke(path, with: .color(trace.opacity(0.16)), lineWidth: 1)
+                    context.stroke(Path(ellipseIn: CGRect(x: point.x - 2.5, y: point.y - 2.5, width: 5, height: 5)), with: .color(trace.opacity(0.22)), lineWidth: 1)
                 }
-                rakes.blendMode = .clear
-                rakes.fill(Path(ellipseIn: CGRect(x: center.x - 48, y: center.y - 48, width: 96, height: 96)), with: .color(.black))
-                for r in stride(from: CGFloat(14), through: 46, by: 6) {
-                    context.stroke(Path(ellipseIn: CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2)), with: .color(ink.opacity(0.13)), lineWidth: 0.8)
+
+            case .ruledPaper:
+                var lines = Path()
+                var y: CGFloat = 22
+                while y < size.height {
+                    lines.addRect(CGRect(x: 0, y: y, width: size.width, height: 1))
+                    y += 22
                 }
-                context.fill(Path(ellipseIn: CGRect(x: center.x - 8, y: center.y - 6, width: 16, height: 12)), with: .color(ink.opacity(0.18)))
+                context.fill(lines, with: .color(Color(hex: 0x9DBBE3).opacity(0.55)))
+                context.fill(Path(CGRect(x: 30, y: 0, width: 1, height: size.height)), with: .color(Color(hex: 0xE38B8B).opacity(0.6)))
 
             case .scanlines:
                 var lines = Path()
@@ -379,6 +390,9 @@ struct CornerArt: View {
                 .interpolation(style.theme == .arcade ? .none : .high)
                 .frame(width: size.width, height: size.height)
                 .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+                .overlay {
+                    if style.theme == .robot { RobotBlink(animate: animate) }
+                }
                 .overlay(alignment: .topLeading) {
                     if style.particle == .steam {
                         // Rises from the coffee in the Cozy Cafe illustration.
@@ -389,6 +403,50 @@ struct CornerArt: View {
                 }
                 .padding(Self.padding)
                 .allowsHitTesting(false)
+        }
+    }
+}
+
+/// The AI theme's robot closing its eyes now and then: dark visor over each eye light with
+/// a glowing curve in its place, drawn to line up with `robot_corner.png`.
+struct RobotBlink: View {
+    let animate: Bool
+
+    var body: some View {
+        BlinkingImage(running: animate) { RobotClosedEyes() }
+            .allowsHitTesting(false)
+    }
+}
+
+private struct RobotClosedEyes: View {
+    /// The art's size in pixels and its eye lights within it.
+    static let artSize = CGSize(width: 401, height: 420)
+    static let eyes = [CGRect(x: 175, y: 147, width: 42, height: 55), CGRect(x: 276, y: 160, width: 41, height: 56)]
+
+    var body: some View {
+        Canvas { context, size in
+            let sx = size.width / Self.artSize.width
+            let sy = size.height / Self.artSize.height
+            for eye in Self.eyes {
+                let rect = CGRect(x: eye.minX * sx, y: eye.minY * sy, width: eye.width * sx, height: eye.height * sy)
+                var visor = context
+                visor.addFilter(.blur(radius: rect.width * 0.08))
+                visor.fill(
+                    Path(ellipseIn: rect.insetBy(dx: -rect.width * 0.16, dy: -rect.height * 0.16)),
+                    with: .linearGradient(
+                        Gradient(colors: [Color(hex: 0x0B2B50), Color(hex: 0x001736)]),
+                        startPoint: CGPoint(x: rect.midX, y: rect.minY), endPoint: CGPoint(x: rect.midX, y: rect.maxY)
+                    )
+                )
+                var lid = Path()
+                let y = rect.midY + rect.height * 0.12
+                lid.move(to: CGPoint(x: rect.minX + rect.width * 0.1, y: y))
+                lid.addQuadCurve(to: CGPoint(x: rect.maxX - rect.width * 0.1, y: y), control: CGPoint(x: rect.midX, y: rect.midY - rect.height * 0.2))
+                var glow = context
+                glow.addFilter(.blur(radius: rect.width * 0.1))
+                glow.stroke(lid, with: .color(Color(hex: 0x3FC8FF).opacity(0.8)), style: StrokeStyle(lineWidth: rect.width * 0.2, lineCap: .round))
+                context.stroke(lid, with: .color(Color(hex: 0x86E6FF)), style: StrokeStyle(lineWidth: rect.width * 0.11, lineCap: .round))
+            }
         }
     }
 }

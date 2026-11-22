@@ -2,13 +2,15 @@
 // transparency, for the theme art in Resources/Themes.
 //
 //   swift scripts/cutout.swift <input> <output.png> [--bg white|green|magenta] [--holes]
-//                              [--flood] [--despill-all] [--max 420]
+//                              [--flood] [--despill-all] [--sample] [--max 420]
 //
 // Vision's foreground mask lifts the subject. Edge pixels are then "unmatted" against the
 // known background color so no white or green fringe remains. --holes also clears enclosed
 // areas that match the background (gaps in monstera leaves, stripes in a sun). --flood uses a
 // color key from the borders instead of Vision, for subjects Vision trims too much.
 // --despill-all removes background tint from every pixel, not just the edges.
+// --sample measures the background from the image's border instead of assuming the pure
+// color, for generators that paint green as (0, 243, 12).
 // Vision needs the Neural Engine, so run this outside a sandbox.
 import AppKit
 import CoreImage
@@ -25,6 +27,7 @@ var bgName = "white"
 var clearHoles = false
 var useFlood = false
 var despillAll = false
+var sampleBackground = false
 var maxSide = 420
 var index = 3
 while index < args.count {
@@ -33,12 +36,13 @@ while index < args.count {
     case "--holes": clearHoles = true
     case "--flood": useFlood = true
     case "--despill-all": despillAll = true
+    case "--sample": sampleBackground = true
     case "--max": index += 1; maxSide = Int(args[index]) ?? maxSide
     default: break
     }
     index += 1
 }
-let background: (Double, Double, Double) = switch bgName {
+var background: (Double, Double, Double) = switch bgName {
 case "green": (0, 255, 0)
 case "magenta": (255, 0, 255)
 default: (255, 255, 255)
@@ -62,6 +66,20 @@ func rgbaPixels(_ image: CGImage) -> [UInt8] {
 }
 
 var pixels = rgbaPixels(source)
+
+if sampleBackground {
+    var sum = (0.0, 0.0, 0.0)
+    var count = 0.0
+    for x in stride(from: 0, to: width, by: 4) {
+        for y in [0, height - 1] {
+            let p = (y * width + x) * 4
+            sum = (sum.0 + Double(pixels[p]), sum.1 + Double(pixels[p + 1]), sum.2 + Double(pixels[p + 2]))
+            count += 1
+        }
+    }
+    background = (sum.0 / count, sum.1 / count, sum.2 / count)
+    print("sampled background \(Int(background.0)), \(Int(background.1)), \(Int(background.2))")
+}
 
 func distanceToBackground(_ i: Int) -> Double {
     let r = Double(pixels[i]) - background.0

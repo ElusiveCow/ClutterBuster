@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Occasional drifting leaves, snowflakes, petals, bubbles or steam. Each particle is a
+/// Occasional drifting leaves, snowflakes, bubbles or steam. Each particle is a
 /// Core Animation layer with one low-frame-rate animation, and nothing redraws between
 /// particles. Stopping lets the ones in flight finish and launches no more.
 struct ParticleEmitter: NSViewRepresentable {
@@ -57,7 +57,6 @@ final class EmitterView: NSView {
         switch kind {
         case .leaves: 9
         case .snow: 2.6
-        case .petals: 7
         case .bubbles: 3.5
         case .steam: 0.9
         }
@@ -97,7 +96,7 @@ final class EmitterView: NSView {
         var peakOpacity: Float = 1
         var growth: CGFloat = 1
         switch kind {
-        case .leaves, .snow, .petals:
+        case .leaves, .snow:
             let speed: CGFloat = kind == .snow ? .random(in: 16...26) : .random(in: 24...34)
             let start = CGPoint(x: .random(in: 0...size.width), y: size.height + 10)
             let fall = size.height + 20
@@ -166,7 +165,6 @@ final class EmitterView: NSView {
         switch kind {
         case .leaves: leafImage()
         case .snow: dotImage(diameter: 6)
-        case .petals: petalImage()
         case .bubbles: bubbleImage()
         case .steam: dotImage(diameter: 14)
         }
@@ -199,16 +197,6 @@ final class EmitterView: NSView {
             let colors = [CGColor(gray: 1, alpha: 1), CGColor(gray: 1, alpha: 0)] as CFArray
             let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors, locations: [0.35, 1])!
             context.drawRadialGradient(gradient, startCenter: center, startRadius: 0, endCenter: center, endRadius: diameter / 2, options: [])
-        }
-    }
-
-    private static func petalImage() -> CGImage? {
-        image(size: CGSize(width: 9, height: 6)) { context in
-            context.addEllipse(in: CGRect(x: 0, y: 0, width: 9, height: 6))
-            context.clip()
-            let colors = [NSColor(Color(hex: 0xFFC4D6)).cgColor, NSColor(Color(hex: 0xF58FB0)).cgColor] as CFArray
-            let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors, locations: [0, 1])!
-            context.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 9, y: 0), options: [])
         }
     }
 

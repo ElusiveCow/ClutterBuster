@@ -136,6 +136,61 @@ final class PulseView: LayerAnimationView {
     }
 }
 
+// MARK: Blink
+
+/// SwiftUI content shown as a still that's hidden except for brief flashes while running:
+/// once partway through each `period`, then twice in quick succession near its end.
+struct BlinkingImage<Content: View>: NSViewRepresentable {
+    let running: Bool
+    var period: Double = 9
+    @ViewBuilder let content: () -> Content
+
+    func makeNSView(context: Context) -> BlinkView { BlinkView() }
+
+    func updateNSView(_ view: BlinkView, context: Context) {
+        view.draw = { size, scale in renderImage(content(), size: size, scale: scale) }
+        view.period = period
+        view.isRunning = running
+    }
+}
+
+final class BlinkView: LayerAnimationView {
+    var draw: ((CGSize, CGFloat) -> CGImage?)?
+    var period: Double = 9
+    private let sprite = CALayer()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        sprite.opacity = 0
+        layer?.addSublayer(sprite)
+    }
+
+    override func layoutLayers() { sprite.frame = bounds }
+
+    override func render(scale: CGFloat) {
+        sprite.contentsScale = scale
+        sprite.contents = draw?(bounds.size, scale)
+        if sprite.animation(forKey: "blink") == nil { runningChanged() }
+    }
+
+    override func runningChanged() {
+        guard isRunning else {
+            sprite.removeAnimation(forKey: "blink")
+            return
+        }
+        guard sprite.animation(forKey: "blink") == nil else { return }
+        let animation = CAKeyframeAnimation(keyPath: "opacity")
+        animation.values = [0, 1, 0, 1, 0, 1, 0]
+        animation.keyTimes = [0, 0.4, 0.42, 0.9, 0.92, 0.94, 0.96]
+        animation.calculationMode = .discrete
+        animation.duration = period
+        animation.repeatCount = .infinity
+        // Fast enough that a blink of a fifth of a second always lands on a frame.
+        animation.preferredFrameRateRange = CAFrameRateRange(minimum: 10, maximum: 30, preferred: 20)
+        sprite.add(animation, forKey: "blink")
+    }
+}
+
 // MARK: Rainbow border
 
 /// RGB's border: a rainbow ring with a soft glow whose colors travel around the fence.

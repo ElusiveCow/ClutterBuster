@@ -15,19 +15,17 @@ ART=(
     "fall_corner white --holes"
     "fall_leaf white --holes --max 128"
     "winter_corner magenta --despill-all"
-    "spring_corner white --holes"
     "ocean_corner white --holes"
     "retro_corner white --holes"
     "halloween_corner white --holes"
     "christmas_corner white --holes"
     "cafe_corner white --flood"
     "space_corner green"
-    "jungle_corner white --holes"
-    "library_corner white --holes"
     "beach_corner green"
-    "zen_corner white --holes"
     "arcade_corner white --holes"
     "catnap_corner green"
+    "robot_corner green --holes --sample"
+    "notebook_corner green --flood --holes --despill-all --sample"
 )
 
 for entry in "${ART[@]}"; do

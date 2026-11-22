@@ -279,7 +279,7 @@ struct TitleStyleEditor: View {
     }
 
     private func fontMenu(_ style: TitleStyle, theme: ThemeStyle) -> some View {
-        let themeFont = TitleFont(design: theme.titleDesign)
+        let themeFont = theme.titleFont
         return Menu {
             Button {
                 update { $0.font = nil }

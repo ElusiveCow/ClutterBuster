@@ -45,7 +45,13 @@ final class ThemeSettings: ObservableObject {
 
     private init() {
         let defaults = UserDefaults.standard
-        globalTheme = FenceTheme(rawValue: defaults.string(forKey: AppSettings.globalThemeKey) ?? "") ?? .classic
+        let saved = defaults.string(forKey: AppSettings.globalThemeKey)
+        globalTheme = FenceTheme(rawValue: saved ?? "") ?? .classic
+        if let saved, FenceTheme(rawValue: saved) == nil {
+            // Saved right away so this happens, and is logged, once.
+            defaults.set(FenceTheme.classic.rawValue, forKey: AppSettings.globalThemeKey)
+            Log.write("global theme \"\(saved)\" isn't in this version; using Classic")
+        }
         animateThemes = defaults.object(forKey: AppSettings.animateThemesKey) as? Bool ?? true
         updateMotion()
         NSWorkspace.shared.notificationCenter.addObserver(

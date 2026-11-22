@@ -103,8 +103,12 @@ extension Fence {
         color = try container.decodeIfPresent(FenceColor.self, forKey: .color) ?? .slate
         iconsPerRow = try container.decodeIfPresent(Int.self, forKey: .iconsPerRow) ?? 4
         opacity = try container.decodeIfPresent(Double.self, forKey: .opacity) ?? 1
-        // A theme from a newer version falls back to the global theme.
-        theme = (try? container.decodeIfPresent(FenceTheme.self, forKey: .theme)) ?? nil
+        // A removed theme, or one from a newer version, falls back to the global theme.
+        let themeName = try? container.decodeIfPresent(String.self, forKey: .theme)
+        theme = themeName.flatMap(FenceTheme.init(rawValue:))
+        if let themeName, theme == nil {
+            Log.write("fence \"\(title)\" used the theme \"\(themeName)\", which this version doesn't have; it follows the global theme now")
+        }
         items = try container.decodeIfPresent([FenceItem].self, forKey: .items) ?? []
         tabs = try container.decodeIfPresent([FenceTab].self, forKey: .tabs) ?? []
         selectedTabID = try container.decodeIfPresent(UUID.self, forKey: .selectedTabID)

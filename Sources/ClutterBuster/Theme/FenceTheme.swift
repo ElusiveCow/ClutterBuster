@@ -1,8 +1,8 @@
 import SwiftUI
 
 enum FenceTheme: String, Codable, CaseIterable, Identifiable {
-    case classic, rgb, fall, winter, spring, ocean, glass, retro, halloween, christmas
-    case cafe, space, jungle, library, beach, zen, arcade, catNap
+    case classic, rgb, fall, winter, ocean, glass, retro, halloween, christmas
+    case cafe, space, beach, arcade, catNap, robot, notebook
 
     var id: String { rawValue }
 
@@ -12,7 +12,6 @@ enum FenceTheme: String, Codable, CaseIterable, Identifiable {
         case .rgb: "RGB"
         case .fall: "Fall"
         case .winter: "Winter"
-        case .spring: "Spring"
         case .ocean: "Ocean"
         case .glass: "Frosted Glass"
         case .retro: "Retro"
@@ -20,12 +19,11 @@ enum FenceTheme: String, Codable, CaseIterable, Identifiable {
         case .christmas: "Christmas"
         case .cafe: "Cozy Cafe"
         case .space: "Space"
-        case .jungle: "Jungle"
-        case .library: "Library"
         case .beach: "Beach"
-        case .zen: "Zen Garden"
         case .arcade: "Arcade"
         case .catNap: "Cat Nap"
+        case .robot: "AI"
+        case .notebook: "Notebook"
         }
     }
 
@@ -49,11 +47,11 @@ enum ThemeBorder {
 }
 
 enum ThemePattern {
-    case none, snow, retroGrid, nebula, waves, woodGrain, sandRakes, scanlines, sparkles
+    case none, snow, retroGrid, nebula, waves, woodGrain, scanlines, sparkles, circuit, ruledPaper
 }
 
 enum ThemeParticle {
-    case leaves, snow, petals, bubbles, steam
+    case leaves, snow, bubbles, steam
 }
 
 enum TitleAccent {
@@ -79,7 +77,7 @@ struct ThemeStyle {
     var titleText: Color = .white
     var titleSecondary: Color = .white.opacity(0.6)
     /// The title's default font and weight; a fence's `TitleStyle` can override them.
-    var titleDesign: Font.Design = .default
+    var titleFont: TitleFont = .system
     var titleWeight: TitleWeight = .semibold
 
     var tabStrip: Color
@@ -218,31 +216,6 @@ struct ThemeStyle {
                 particle: .snow
             )
 
-        case .spring:
-            let ink = Color(hex: 0x4E1D36)
-            return ThemeStyle(
-                theme: theme,
-                isLight: true,
-                body: .gradient([Color(hex: 0xFDE7EF), Color(hex: 0xF8CEDD)]),
-                bodyOpacity: 0.9,
-                solidBody: Color(hex: 0xF8CEDD),
-                titleBar: .gradient([Color(hex: 0xF6B3C8), Color(hex: 0xF1A2BB)]),
-                titleText: ink,
-                titleSecondary: Color(hex: 0x8E4568),
-                tabStrip: Color(hex: 0xF9CADA),
-                tabPill: .white,
-                tabSelectedText: ink,
-                tabText: ink.opacity(0.65),
-                bodyText: ink,
-                bodySecondary: ink.opacity(0.6),
-                textShadow: .clear,
-                border: .line(Color(hex: 0xE58DAC).opacity(0.6)),
-                accent: Color(hex: 0xE5638F),
-                cornerArt: "spring_corner",
-                artScale: 1.05,
-                particle: .petals
-            )
-
         case .ocean:
             return ThemeStyle(
                 theme: theme,
@@ -349,7 +322,7 @@ struct ThemeStyle {
                 titleBar: .gradient([Color(hex: 0x3F2716), Color(hex: 0x372112)]),
                 titleText: Color(hex: 0xFFF2E2),
                 titleSecondary: Color(hex: 0xE2BE95),
-                titleDesign: .serif,
+                titleFont: .serif,
                 tabStrip: Color(hex: 0x5A3922),
                 tabPill: Color(hex: 0xB97A45),
                 tabText: Color(hex: 0xF3DEC6).opacity(0.8),
@@ -381,47 +354,6 @@ struct ThemeStyle {
                 artScale: 0.95
             )
 
-        case .jungle:
-            return ThemeStyle(
-                theme: theme,
-                body: .gradient([Color(hex: 0x21593A), Color(hex: 0x123D23)]),
-                bodyOpacity: 0.9,
-                solidBody: Color(hex: 0x123D23),
-                pattern: .sparkles,
-                titleBar: .gradient([Color(hex: 0x0F3420), Color(hex: 0x0C2D1B)]),
-                titleSecondary: Color(hex: 0xB6E4AA),
-                tabStrip: Color(hex: 0x1A4C2C),
-                tabPill: Color(hex: 0x3E9D58),
-                tabText: .white.opacity(0.72),
-                bodySecondary: Color(hex: 0xC8EDC0),
-                border: .line(Color(hex: 0x8FD18A).opacity(0.35)),
-                accent: Color(hex: 0x3E9D58),
-                cornerArt: "jungle_corner",
-                artScale: 1.2
-            )
-
-        case .library:
-            return ThemeStyle(
-                theme: theme,
-                body: .gradient([Color(hex: 0x4C2E1B), Color(hex: 0x301C10)]),
-                solidBody: Color(hex: 0x301C10),
-                pattern: .woodGrain,
-                titleBar: .gradient([Color(hex: 0x2B170B), Color(hex: 0x241309)]),
-                titleText: Color(hex: 0xF6E7C9),
-                titleSecondary: Color(hex: 0xCDAE80),
-                titleDesign: .serif,
-                tabStrip: Color(hex: 0x3D2414),
-                tabPill: Color(hex: 0x8C5C2E),
-                tabSelectedText: Color(hex: 0xFFF4DC),
-                tabText: Color(hex: 0xE7D2AE).opacity(0.8),
-                bodyText: Color(hex: 0xF8EBD2),
-                bodySecondary: Color(hex: 0xD8BC90),
-                border: .line(Color(hex: 0xC9A15C).opacity(0.4)),
-                accent: Color(hex: 0xA8733A),
-                cornerArt: "library_corner",
-                artScale: 1.0
-            )
-
         case .beach:
             let ink = Color(hex: 0x4A3416)
             return ThemeStyle(
@@ -446,30 +378,6 @@ struct ThemeStyle {
                 artScale: 0.95
             )
 
-        case .zen:
-            let ink = Color(hex: 0x34302A)
-            return ThemeStyle(
-                theme: theme,
-                isLight: true,
-                body: .gradient([Color(hex: 0xE8E3D8), Color(hex: 0xD3CBBC)]),
-                bodyOpacity: 0.9,
-                solidBody: Color(hex: 0xD3CBBC),
-                pattern: .sandRakes,
-                titleBar: .gradient([Color(hex: 0x6E695F), Color(hex: 0x625D54)]),
-                titleSecondary: Color(hex: 0xE2DCCF),
-                tabStrip: Color(hex: 0xDAD3C5),
-                tabPill: .white,
-                tabSelectedText: ink,
-                tabText: ink.opacity(0.65),
-                bodyText: ink,
-                bodySecondary: ink.opacity(0.6),
-                textShadow: .clear,
-                border: .line(Color(hex: 0x8F887B).opacity(0.5)),
-                accent: Color(hex: 0x7C8F5E),
-                cornerArt: "zen_corner",
-                artScale: 1.0
-            )
-
         case .arcade:
             return ThemeStyle(
                 theme: theme,
@@ -479,7 +387,7 @@ struct ThemeStyle {
                 titleBar: .gradient([Color(hex: 0x231C55), Color(hex: 0x1E184A)]),
                 titleText: Color(hex: 0xFFE45C),
                 titleSecondary: Color(hex: 0x6EF3FF),
-                titleDesign: .monospaced,
+                titleFont: .monospaced,
                 tabStrip: Color(hex: 0x1A1640),
                 tabPill: Color(hex: 0xFF3E8A),
                 tabText: Color(hex: 0xB8B3FF).opacity(0.85),
@@ -502,7 +410,7 @@ struct ThemeStyle {
                 titleBar: .gradient([Color(hex: 0xCDB6E6), Color(hex: 0xC2A9DF)]),
                 titleText: ink,
                 titleSecondary: Color(hex: 0x6E5590),
-                titleDesign: .rounded,
+                titleFont: .rounded,
                 tabStrip: Color(hex: 0xEBDDF4),
                 tabPill: .white,
                 tabSelectedText: ink,
@@ -514,6 +422,57 @@ struct ThemeStyle {
                 accent: Color(hex: 0x9B7BD0),
                 cornerArt: "catnap_corner",
                 artScale: 1.05
+            )
+
+        case .robot:
+            let ink = Color(hex: 0x1F2B3D)
+            return ThemeStyle(
+                theme: theme,
+                isLight: true,
+                body: .gradient([Color(hex: 0xF9FBFF), Color(hex: 0xEAF1FB)]),
+                solidBody: Color(hex: 0xEAF1FB),
+                pattern: .circuit,
+                titleBar: .gradient([.white, Color(hex: 0xF3F7FD)]),
+                titleText: ink,
+                titleSecondary: Color(hex: 0x5D6B80),
+                titleFont: .rounded,
+                tabStrip: Color(hex: 0xDCE7F6),
+                tabPill: .white,
+                tabSelectedText: ink,
+                tabText: ink.opacity(0.62),
+                bodyText: ink,
+                bodySecondary: ink.opacity(0.55),
+                textShadow: .clear,
+                border: .glow(Color(hex: 0x7FB8FF)),
+                accent: Color(hex: 0x3B8BF0),
+                cornerArt: "robot_corner",
+                artScale: 0.95
+            )
+
+        case .notebook:
+            let ink = Color(hex: 0x2B2F3A)
+            let brown = Color(hex: 0x4A3320)
+            return ThemeStyle(
+                theme: theme,
+                isLight: true,
+                body: .gradient([Color(hex: 0xFFFDF6), Color(hex: 0xFBF5E7)]),
+                solidBody: Color(hex: 0xFBF5E7),
+                pattern: .ruledPaper,
+                titleBar: .gradient([Color(hex: 0xD9BC92), Color(hex: 0xCDAE82)]),
+                titleText: brown,
+                titleSecondary: brown.opacity(0.7),
+                titleFont: .family("Noteworthy"),
+                tabStrip: Color(hex: 0xEFE2C8),
+                tabPill: Color(hex: 0xFFFCF3),
+                tabSelectedText: ink,
+                tabText: ink.opacity(0.62),
+                bodyText: ink,
+                bodySecondary: ink.opacity(0.55),
+                textShadow: .clear,
+                border: .line(Color(hex: 0xB89A6E).opacity(0.7)),
+                accent: Color(hex: 0x3C6FD1),
+                cornerArt: "notebook_corner",
+                artScale: 1.15
             )
         }
     }
