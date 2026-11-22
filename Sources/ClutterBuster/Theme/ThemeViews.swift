@@ -347,6 +347,8 @@ struct CornerArt: View {
     let style: ThemeStyle
     let area: CGSize
     let animate: Bool
+    /// Height the grid above keeps for a row of icons.
+    var minimumGrid = FenceMetrics.baseMinimumGridHeight
 
     static let padding: CGFloat = 3
     /// Width at an `artScale` of 1, and the tallest the art gets.
@@ -355,12 +357,12 @@ struct CornerArt: View {
 
     /// Shrinks on small fences so the grid above it keeps room for a row of icons, and isn't
     /// drawn at all when it would be too small to make out.
-    static func size(for style: ThemeStyle, area: CGSize) -> CGSize? {
+    static func size(for style: ThemeStyle, area: CGSize, minimumGrid: CGFloat = FenceMetrics.baseMinimumGridHeight) -> CGSize? {
         guard let name = style.cornerArt, let image = ThemeArt.image(name), image.size.width > 0 else { return nil }
         let aspect = image.size.height / image.size.width
         var width = min(baseWidth * style.artScale, area.width * 0.45)
         var height = width * aspect
-        let maxHeight = min(Self.maxHeight, area.height - FenceCoordinator.minimumGridHeight - padding)
+        let maxHeight = min(Self.maxHeight, area.height - minimumGrid - padding)
         if height > maxHeight {
             height = maxHeight
             width = height / aspect
@@ -371,7 +373,7 @@ struct CornerArt: View {
 
     var body: some View {
         if let name = style.cornerArt, let image = ThemeArt.image(name),
-           let size = Self.size(for: style, area: area) {
+           let size = Self.size(for: style, area: area, minimumGrid: minimumGrid) {
             Image(nsImage: image)
                 .resizable()
                 .interpolation(style.theme == .arcade ? .none : .high)

@@ -59,6 +59,16 @@ struct Fence: Codable, Identifiable {
     var tabRows = 1
     /// Shrinks the tab strip to a thin bar showing just the current tab.
     var tabsCollapsed = false
+    /// Scales all of the fence's text together: title, tabs, sort button and item labels.
+    var textScale: Double = 1
+
+    static let textScaleRange = 0.8...1.8
+    static let textScaleStep = 0.1
+
+    static func clampedTextScale(_ scale: Double) -> Double {
+        let stepped = (scale / textScaleStep).rounded() * textScaleStep
+        return min(max(stepped, textScaleRange.lowerBound), textScaleRange.upperBound)
+    }
 
     /// The tab currently shown, falling back to the first tab.
     var currentTab: FenceTab {
@@ -98,6 +108,7 @@ extension Fence {
         selectedTabID = try container.decodeIfPresent(UUID.self, forKey: .selectedTabID)
         tabRows = max(1, try container.decodeIfPresent(Int.self, forKey: .tabRows) ?? 1)
         tabsCollapsed = try container.decodeIfPresent(Bool.self, forKey: .tabsCollapsed) ?? false
+        textScale = Self.clampedTextScale(try container.decodeIfPresent(Double.self, forKey: .textScale) ?? 1)
         normalizeTabs()
     }
 }

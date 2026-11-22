@@ -14,9 +14,12 @@ struct GridMetrics {
     let icon: CGFloat
     let label: CGFloat
     let showLabels: Bool
+    /// The fence's text size; labels and the rows they sit in grow with it.
+    let textScale: CGFloat
 
-    init(width: CGFloat, columns: Int, height: CGFloat? = nil, itemCount: Int = 0) {
+    init(width: CGFloat, columns: Int, height: CGFloat? = nil, itemCount: Int = 0, textScale: CGFloat = 1) {
         self.columns = max(1, columns)
+        self.textScale = textScale
         cell = max(1, (width - Self.padding * 2) / CGFloat(self.columns))
         let widest = min(max(cell * 0.72, 20), 128, cell)
         var icon = widest
@@ -24,22 +27,22 @@ struct GridMetrics {
             let rows = CGFloat((itemCount + self.columns - 1) / self.columns)
             let available = height - Self.topPadding - Self.bottomPadding - (rows - 1) * Self.rowSpacing
             let floor = min(widest, max(32, cell * 0.45))
-            while icon > floor, rows * Self.tileHeight(icon: icon) > available { icon -= 1 }
+            while icon > floor, rows * Self.tileHeight(icon: icon, textScale: textScale) > available { icon -= 1 }
         }
         self.icon = icon
-        label = Self.labelSize(icon: icon)
+        label = Self.labelSize(icon: icon, textScale: textScale)
         showLabels = icon >= 30
     }
 
     /// Every tile is this tall (room for a two-line label) so rows line up predictably.
-    var tileHeight: CGFloat { Self.tileHeight(icon: icon) }
+    var tileHeight: CGFloat { Self.tileHeight(icon: icon, textScale: textScale) }
 
-    private static func labelSize(icon: CGFloat) -> CGFloat {
-        min(max(icon * 0.19, 9), 15)
+    private static func labelSize(icon: CGFloat, textScale: CGFloat) -> CGFloat {
+        min(max(icon * 0.19, 9), 15) * textScale
     }
 
-    private static func tileHeight(icon: CGFloat) -> CGFloat {
-        let label = labelSize(icon: icon)
+    private static func tileHeight(icon: CGFloat, textScale: CGFloat) -> CGFloat {
+        let label = labelSize(icon: icon, textScale: textScale)
         return icon + 8 + (icon >= 30 ? 3 + (label * 1.25).rounded(.up) * 2 : 0)
     }
 }
@@ -58,14 +61,15 @@ struct ItemGrid: View {
     var body: some View {
         GeometryReader { geo in
             let height = max(geo.size.height - reservedBottom, 0)
-            let metrics = GridMetrics(width: geo.size.width, columns: fence.iconsPerRow, height: height, itemCount: items.count)
+            let scale = CGFloat(fence.textScale)
+            let metrics = GridMetrics(width: geo.size.width, columns: fence.iconsPerRow, height: height, itemCount: items.count, textScale: scale)
             Group {
                 if items.isEmpty {
                     VStack(spacing: 6) {
                         Image(systemName: "tray.and.arrow.down")
-                            .font(.system(size: 22))
+                            .font(.system(size: 22 * scale))
                         Text("Drag files here")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.system(size: 12 * scale, weight: .medium))
                     }
                     .foregroundStyle(style.bodySecondary)
                     .shadow(color: style.textShadow, radius: 2, y: 1)
@@ -118,6 +122,7 @@ struct ItemTile: View {
                     .font(.system(size: metrics.label))
                     .foregroundStyle(selected ? .white : style.bodyText)
                     .lineLimit(2)
+                    .allowsTightening(true)
                     .truncationMode(.middle)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 4)

@@ -17,6 +17,8 @@ struct FenceView: View {
     @State private var tabDraft = ""
     @FocusState private var tabFieldFocused: Bool
     @State private var hovered = false
+    @State private var badge: String?
+    @State private var badgeHide: DispatchWorkItem?
 
     private let corner: CGFloat = 12
 
@@ -25,10 +27,11 @@ struct FenceView: View {
             let style = ThemeStyle.resolve(fence, global: themes.globalTheme)
             let animate = themes.animates && !coordinator.interacting.contains(fenceID)
             let tab = fence.currentTab
+            let metrics = FenceMetrics(fence)
             VStack(spacing: 0) {
-                titleBar(fence, style: style, animate: animate)
+                titleBar(fence, style: style, metrics: metrics, animate: animate)
                 if !fence.isCollapsed {
-                    tabBar(fence, style: style)
+                    tabBar(fence, style: style, metrics: metrics)
                     GeometryReader { geo in
                         ZStack(alignment: .bottomTrailing) {
                             ThemeBody(style: style, animate: animate)
@@ -36,9 +39,9 @@ struct FenceView: View {
                                 fence: fence,
                                 style: style,
                                 items: coordinator.displayedItems(fence, tab: tab),
-                                reservedBottom: cornerBand(style, area: geo.size)
+                                reservedBottom: cornerBand(style, area: geo.size, metrics: metrics)
                             )
-                            CornerArt(style: style, area: geo.size, animate: animate)
+                            CornerArt(style: style, area: geo.size, animate: animate, minimumGrid: metrics.minimumGridHeight)
                         }
                         .frame(width: geo.size.width, height: geo.size.height)
                     }
@@ -63,7 +66,23 @@ struct FenceView: View {
                     gripColor: style.bodySecondary
                 )
             }
+            .overlay {
+                if let badge {
+                    Text(badge)
+                        .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(style.titleText)
+                        .padding(.horizontal, 12)
+                        .frame(height: 26)
+                        .background(ThemeFillView(fill: style.titleBar).opacity(0.94).clipShape(Capsule()))
+                        .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
+                }
+            }
             .onHover { hovered = $0 }
+            .onChange(of: fence.textScale) { _, scale in
+                showBadge("\(Int((scale * 100).rounded()))%")
+            }
             .dropDestination(for: URL.self) { urls, _ in
                 coordinator.addItems(urls, to: fenceID)
                 return true
@@ -71,24 +90,35 @@ struct FenceView: View {
         }
     }
 
+    /// Briefly shows a value, such as the new text size, over the middle of the fence.
+    private func showBadge(_ text: String) {
+        badgeHide?.cancel()
+        withAnimation(.easeOut(duration: 0.12)) { badge = text }
+        let hide = DispatchWorkItem {
+            withAnimation(.easeIn(duration: 0.35)) { badge = nil }
+        }
+        badgeHide = hide
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9, execute: hide)
+    }
+
     // The buttons sit beside the drag surface rather than inside it: a menu swallows its
     // mouse-up, which would leave the move gesture mid-press and lose the next drag.
-    private func titleBar(_ fence: Fence, style: ThemeStyle, animate: Bool) -> some View {
+    private func titleBar(_ fence: Fence, style: ThemeStyle, metrics: FenceMetrics, animate: Bool) -> some View {
         ZStack {
-            titleDragSurface(fence, style: style, animate: animate)
+            titleDragSurface(fence, style: style, metrics: metrics, animate: animate)
             titleButtons(fence, style: style)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: FenceCoordinator.titleHeight)
+        .frame(height: metrics.titleHeight)
     }
 
-    private func titleDragSurface(_ fence: Fence, style: ThemeStyle, animate: Bool) -> some View {
+    private func titleDragSurface(_ fence: Fence, style: ThemeStyle, metrics: FenceMetrics, animate: Bool) -> some View {
         ZStack {
             if isRenaming {
                 TextField("Fence name", text: $draftTitle)
                     .textFieldStyle(.plain)
                     .multilineTextAlignment(.center)
-                    .font(.system(size: 13, weight: .semibold, design: style.titleDesign))
+                    .font(.system(size: metrics.font(13), weight: .semibold, design: style.titleDesign))
                     .foregroundStyle(style.titleText)
                     .focused($titleFocused)
                     .onSubmit(commitRename)
@@ -110,7 +140,7 @@ struct FenceView: View {
                         .foregroundStyle(style.titleSecondary)
                         .fixedSize()
                 }
-                .font(.system(size: 13, weight: .semibold, design: style.titleDesign))
+                .font(.system(size: metrics.font(13), weight: .semibold, design: style.titleDesign))
                 .shadow(color: style.textShadow, radius: 2, y: 1)
                 .padding(.horizontal, 34)
                 .help(count == 1 ? "1 item" : "\(count) items")
@@ -169,25 +199,25 @@ struct FenceView: View {
         .padding(.horizontal, 6)
     }
 
-    private func tabBar(_ fence: Fence, style: ThemeStyle) -> some View {
+    private func tabBar(_ fence: Fence, style: ThemeStyle, metrics: FenceMetrics) -> some View {
         Group {
             if fence.tabsCollapsed {
-                collapsedTabBar(fence, style: style)
+                collapsedTabBar(fence, style: style, metrics: metrics)
             } else {
                 VStack(spacing: 0) {
                     HStack(alignment: .top, spacing: 4) {
-                        tabList(fence, style: style)
+                        tabList(fence, style: style, metrics: metrics)
                             .onPreferenceChange(TabFramesKey.self) { coordinator.tabFrames[fenceID] = $0 }
-                        sortButton(fence, style: style)
-                            .frame(height: FenceCoordinator.tabBarHeight)
+                        sortButton(fence, style: style, metrics: metrics)
+                            .frame(height: metrics.tabBarHeight)
                             .padding(.trailing, 6)
                     }
                     .frame(maxHeight: .infinity, alignment: .top)
-                    TabStripGrip(fenceID: fenceID, rows: fence.tabRows, style: style)
+                    TabStripGrip(fenceID: fenceID, rows: fence.tabRows, metrics: metrics, style: style)
                 }
             }
         }
-        .frame(height: FenceCoordinator.tabStripHeight(fence))
+        .frame(height: metrics.tabStripHeight(fence))
         .background(style.tabStrip)
         .background(GeometryReader { geo in
             Color.clear.preference(key: TabStripFrameKey.self, value: geo.frame(in: .global))
@@ -197,60 +227,60 @@ struct FenceView: View {
 
     /// One row scrolls sideways. Taller strips wrap the tabs and scroll down when they overflow.
     @ViewBuilder
-    private func tabList(_ fence: Fence, style: ThemeStyle) -> some View {
+    private func tabList(_ fence: Fence, style: ThemeStyle, metrics: FenceMetrics) -> some View {
         if fence.tabRows > 1 {
             ScrollView(.vertical) {
-                FlowLayout(spacing: 2, lineSpacing: FenceCoordinator.tabRowHeight - 21) {
+                FlowLayout(spacing: 2, lineSpacing: metrics.tabRowHeight - metrics.tabPillHeight) {
                     ForEach(fence.tabs) { tab in
-                        tabButton(fence, tab, style: style)
+                        tabButton(fence, tab, style: style, metrics: metrics)
                     }
-                    addTabButton(style)
+                    addTabButton(style, metrics: metrics)
                 }
                 .padding(.horizontal, 6)
-                .padding(.vertical, (FenceCoordinator.tabBarHeight - 21) / 2)
+                .padding(.vertical, (metrics.tabBarHeight - metrics.tabPillHeight) / 2)
             }
             .scrollIndicators(.automatic)
         } else {
             ScrollView(.horizontal) {
                 HStack(spacing: 2) {
                     ForEach(fence.tabs) { tab in
-                        tabButton(fence, tab, style: style)
+                        tabButton(fence, tab, style: style, metrics: metrics)
                     }
-                    addTabButton(style)
+                    addTabButton(style, metrics: metrics)
                 }
                 .padding(.horizontal, 6)
             }
             .scrollIndicators(.never)
-            .frame(height: FenceCoordinator.tabBarHeight)
+            .frame(height: metrics.tabBarHeight)
         }
     }
 
-    private func addTabButton(_ style: ThemeStyle) -> some View {
+    private func addTabButton(_ style: ThemeStyle, metrics: FenceMetrics) -> some View {
         Button(action: addTab) {
             Image(systemName: "plus")
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: metrics.font(10), weight: .bold))
                 .foregroundStyle(style.tabText)
-                .frame(width: 20, height: 20)
+                .frame(width: metrics.tabPillHeight - 1, height: metrics.tabPillHeight - 1)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help("New tab")
     }
 
-    private func sortButton(_ fence: Fence, style: ThemeStyle) -> some View {
+    private func sortButton(_ fence: Fence, style: ThemeStyle, metrics: FenceMetrics) -> some View {
         Menu {
             SortMenuContent(fenceID: fenceID, tab: fence.currentTab)
         } label: {
             HStack(spacing: 3) {
                 Image(systemName: "arrow.up.arrow.down")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: metrics.font(8), weight: .bold))
                 Text(fence.currentTab.sort.label)
                     .lineLimit(1)
             }
-            .font(.system(size: 10, weight: .medium))
+            .font(.system(size: metrics.font(10), weight: .medium))
             .foregroundStyle(style.tabText)
-            .padding(.horizontal, 7)
-            .frame(height: 18)
+            .padding(.horizontal, metrics.font(7))
+            .frame(height: metrics.sortPillHeight)
             .background(Capsule().fill(style.tabControl))
             .contentShape(Capsule())
         }
@@ -263,7 +293,7 @@ struct FenceView: View {
 
     /// The tucked-away strip: the current tab's name opens a menu of tabs, and the chevron
     /// brings the strip back.
-    private func collapsedTabBar(_ fence: Fence, style: ThemeStyle) -> some View {
+    private func collapsedTabBar(_ fence: Fence, style: ThemeStyle, metrics: FenceMetrics) -> some View {
         HStack(spacing: 4) {
             Menu {
                 ForEach(fence.tabs) { tab in
@@ -278,16 +308,16 @@ struct FenceView: View {
             } label: {
                 HStack(spacing: 4) {
                     Text(fence.currentTab.name)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: metrics.font(11), weight: .semibold))
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 7, weight: .bold))
+                        .font(.system(size: metrics.font(7), weight: .bold))
                 }
                 .foregroundStyle(style.tabText)
                 .shadow(color: style.textShadow, radius: 1.5, y: 1)
                 .padding(.horizontal, 9)
-                .frame(height: FenceCoordinator.collapsedTabBarHeight)
+                .frame(height: metrics.collapsedTabBarHeight)
                 .contentShape(Rectangle())
             }
             .menuStyle(.button)
@@ -300,9 +330,9 @@ struct FenceView: View {
                 coordinator.setTabStrip(fenceID, rows: fence.tabRows, collapsed: false)
             } label: {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: metrics.font(9), weight: .bold))
                     .foregroundStyle(style.tabText)
-                    .frame(width: 24, height: FenceCoordinator.collapsedTabBarHeight)
+                    .frame(width: 24, height: metrics.collapsedTabBarHeight)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -311,15 +341,15 @@ struct FenceView: View {
         }
     }
 
-    private func tabButton(_ fence: Fence, _ tab: FenceTab, style: ThemeStyle) -> some View {
+    private func tabButton(_ fence: Fence, _ tab: FenceTab, style: ThemeStyle, metrics: FenceMetrics) -> some View {
         let selected = tab.id == fence.currentTab.id
         return Group {
             if editingTabID == tab.id {
                 TextField("Tab name", text: $tabDraft)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: metrics.font(12), weight: .semibold))
                     .foregroundStyle(style.tabSelectedText)
-                    .frame(width: max(50, CGFloat(tabDraft.count) * 8 + 10))
+                    .frame(width: max(50, CGFloat(tabDraft.count) * 8 + 10) * metrics.scale)
                     .focused($tabFieldFocused)
                     .onSubmit(commitTabRename)
                     .onExitCommand { editingTabID = nil }
@@ -328,15 +358,15 @@ struct FenceView: View {
                     }
             } else {
                 Text(tab.name)
-                    .font(.system(size: 12, weight: selected ? .semibold : .regular))
+                    .font(.system(size: metrics.font(12), weight: selected ? .semibold : .regular))
                     .foregroundStyle(selected ? style.tabSelectedText : style.tabText)
                     .shadow(color: style.textShadow, radius: 1.5, y: 1)
                     .lineLimit(1)
                     .fixedSize()
             }
         }
-        .padding(.horizontal, 9)
-        .frame(height: 21)
+        .padding(.horizontal, metrics.font(9))
+        .frame(height: metrics.tabPillHeight)
         .background {
             if selected {
                 Capsule()
@@ -381,8 +411,8 @@ struct FenceView: View {
 
     /// Height along the bottom that tiles stay above so they never sit behind the corner art.
     /// Without art the grid uses the full height.
-    private func cornerBand(_ style: ThemeStyle, area: CGSize) -> CGFloat {
-        guard let art = CornerArt.size(for: style, area: area) else { return 0 }
+    private func cornerBand(_ style: ThemeStyle, area: CGSize, metrics: FenceMetrics) -> CGFloat {
+        guard let art = CornerArt.size(for: style, area: area, minimumGrid: metrics.minimumGridHeight) else { return 0 }
         return art.height + CornerArt.padding + 4
     }
 
@@ -484,6 +514,15 @@ struct FenceMenu: View {
             }
         }
         .disabled(!isClassic)
+        Menu("Text Size \u{00B7} \(Int((fence.textScale * 100).rounded()))%") {
+            Button("Bigger") { coordinator.adjustTextScale(fence.id, by: 1) }
+                .disabled(fence.textScale >= Fence.textScaleRange.upperBound)
+            Button("Smaller") { coordinator.adjustTextScale(fence.id, by: -1) }
+                .disabled(fence.textScale <= Fence.textScaleRange.lowerBound)
+            Divider()
+            Button("Reset to 100%") { coordinator.setTextScale(fence.id, 1) }
+                .disabled(fence.textScale == 1)
+        }
         Button(fence.tabsCollapsed ? "Show Tabs" : "Tuck Tabs Away") {
             coordinator.setTabStrip(fence.id, rows: fence.tabRows, collapsed: !fence.tabsCollapsed)
         }
@@ -553,6 +592,7 @@ struct TabStripFrameKey: PreferenceKey {
 private struct TabStripGrip: View {
     let fenceID: UUID
     let rows: Int
+    let metrics: FenceMetrics
     let style: ThemeStyle
 
     @EnvironmentObject private var coordinator: FenceCoordinator
@@ -565,7 +605,7 @@ private struct TabStripGrip: View {
             .fill(style.tabText.opacity(hovering || dragging ? 0.6 : 0.3))
             .frame(width: 28, height: 3)
             .frame(maxWidth: .infinity)
-            .frame(height: FenceCoordinator.tabGripHeight)
+            .frame(height: FenceMetrics.tabGripHeight)
             .contentShape(Rectangle())
             .onHover { inside in
                 hovering = inside
@@ -584,12 +624,12 @@ private struct TabStripGrip: View {
                     .onChanged { value in
                         let start = startRows ?? rows
                         if startRows == nil { startRows = rows }
-                        let height = FenceCoordinator.tabStripHeight(rows: start, collapsed: false) + value.translation.height
-                        let oneRow = FenceCoordinator.tabStripHeight(rows: 1, collapsed: false)
-                        if height < oneRow - FenceCoordinator.tabBarHeight / 2 {
+                        let height = metrics.tabStripHeight(rows: start, collapsed: false) + value.translation.height
+                        let oneRow = metrics.tabStripHeight(rows: 1, collapsed: false)
+                        if height < oneRow - metrics.tabBarHeight / 2 {
                             coordinator.setTabStrip(fenceID, rows: start, collapsed: true)
                         } else {
-                            let wanted = Int(((height - oneRow) / FenceCoordinator.tabRowHeight).rounded()) + 1
+                            let wanted = Int(((height - oneRow) / metrics.tabRowHeight).rounded()) + 1
                             coordinator.setTabStrip(fenceID, rows: wanted, collapsed: false)
                         }
                     }

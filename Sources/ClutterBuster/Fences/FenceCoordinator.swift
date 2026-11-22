@@ -11,8 +11,6 @@ struct ResizeEdges: OptionSet, Hashable {
 /// Owns the fence windows and hides each fence's Desktop files from Finder while they're in it.
 @MainActor
 final class FenceCoordinator: ObservableObject {
-    static let titleHeight: CGFloat = 30
-
     let store: FenceStore
     let desktop: DesktopIconService
     var toolbarFrame: () -> CGRect? = { nil }
@@ -52,38 +50,22 @@ final class FenceCoordinator: ObservableObject {
     }
 
     /// A collapsed fence is just its title bar.
-    var collapsedHeight: CGFloat { Self.titleHeight }
-
-    /// Height of the tab strip's first row. Each further row adds `tabRowHeight`.
-    static let tabBarHeight: CGFloat = 26
-    static let tabRowHeight: CGFloat = 24
-    /// The bar under the tabs that's dragged to show more rows.
-    static let tabGripHeight: CGFloat = 6
-    static let collapsedTabBarHeight: CGFloat = 18
-    static let maxTabRows = 4
-    /// Room for a row of icons.
-    static let minimumGridHeight: CGFloat = 72
-
-    static func tabStripHeight(rows: Int, collapsed: Bool) -> CGFloat {
-        guard !collapsed else { return collapsedTabBarHeight }
-        return tabBarHeight + CGFloat(max(rows, 1) - 1) * tabRowHeight + tabGripHeight
-    }
-
-    static func tabStripHeight(_ fence: Fence) -> CGFloat {
-        tabStripHeight(rows: fence.tabRows, collapsed: fence.tabsCollapsed)
-    }
+    func collapsedHeight(_ fence: Fence) -> CGFloat { FenceMetrics(fence).titleHeight }
 
     func minimumSize(for fence: Fence) -> CGSize {
-        CGSize(width: 180, height: Self.titleHeight + Self.tabStripHeight(fence) + Self.minimumGridHeight)
+        let metrics = FenceMetrics(fence)
+        return CGSize(width: 180, height: metrics.titleHeight + metrics.tabStripHeight(fence) + metrics.minimumGridHeight)
     }
 
     /// The most tab rows a fence this tall can show: the strip takes at most half the space
     /// under the title, and the grid keeps its minimum.
-    func maxTabRows(forHeight height: CGFloat) -> Int {
+    func maxTabRows(_ fence: Fence, forHeight height: CGFloat) -> Int {
+        let metrics = FenceMetrics(fence)
         var rows = 1
-        while rows < Self.maxTabRows {
-            let strip = Self.tabStripHeight(rows: rows + 1, collapsed: false)
-            guard Self.titleHeight + strip + Self.minimumGridHeight <= height, strip <= (height - Self.titleHeight) / 2 else { break }
+        while rows < FenceMetrics.maxTabRows {
+            let strip = metrics.tabStripHeight(rows: rows + 1, collapsed: false)
+            guard metrics.titleHeight + strip + metrics.minimumGridHeight <= height,
+                  strip <= (height - metrics.titleHeight) / 2 else { break }
             rows += 1
         }
         return rows
@@ -224,7 +206,7 @@ final class FenceCoordinator: ObservableObject {
     /// strip away. Collapsing keeps the row count for when it's expanded again.
     func setTabStrip(_ id: UUID, rows: Int, collapsed: Bool) {
         guard let fence = store.fence(id) else { return }
-        let rows = min(max(rows, 1), maxTabRows(forHeight: expandedFrame(id).height))
+        let rows = min(max(rows, 1), maxTabRows(fence, forHeight: expandedFrame(id).height))
         guard fence.tabRows != rows || fence.tabsCollapsed != collapsed else { return }
         if collapsed { tabFrames[id] = [:] }
         store.update(id) { fence in
@@ -235,6 +217,41 @@ final class FenceCoordinator: ObservableObject {
 
     func setIconsPerRow(_ id: UUID, _ count: Int) {
         store.update(id) { $0.iconsPerRow = count }
+    }
+
+    /// Sets the size of all of a fence's text, in steps of 10% within `Fence.textScaleRange`.
+    func setTextScale(_ id: UUID, _ scale: Double) {
+        guard let fence = store.fence(id) else { return }
+        let scale = Fence.clampedTextScale(scale)
+        guard scale != fence.textScale else { return }
+        store.update(id) { $0.textScale = scale }
+        Log.write("text size of \"\(fence.title)\" set to \(Int((scale * 100).rounded()))%")
+        fitToContent(id)
+    }
+
+    func adjustTextScale(_ id: UUID, by steps: Int) {
+        guard let fence = store.fence(id) else { return }
+        setTextScale(id, fence.textScale + Double(steps) * Fence.textScaleStep)
+    }
+
+    /// After the title or tabs grow: makes the fence at least its minimum size, keeping its
+    /// top edge, and drops tab rows it no longer has room for.
+    private func fitToContent(_ id: UUID) {
+        guard let fence = store.fence(id) else { return }
+        let minimum = minimumSize(for: fence)
+        if fence.frame.height < minimum.height {
+            Log.write("  grew \"\(fence.title)\" from \(Int(fence.frame.height))pt to \(Int(minimum.height))pt tall to fit its text")
+            store.update(id) { fence in
+                let top = fence.frame.maxY
+                fence.frame.size.height = minimum.height
+                fence.frame.origin.y = top - minimum.height
+            }
+        }
+        if let fence = store.fence(id) {
+            let rows = maxTabRows(fence, forHeight: fence.frame.height)
+            if fence.tabRows > rows { store.update(id) { $0.tabRows = rows } }
+        }
+        applyFrame(id)
     }
 
     func toggleCollapse(_ id: UUID) {
@@ -639,7 +656,8 @@ final class FenceCoordinator: ObservableObject {
     private func displayFrame(for fence: Fence) -> CGRect {
         let frame = liveFrames[fence.id] ?? fence.frame
         guard fence.isCollapsed else { return frame }
-        return CGRect(x: frame.minX, y: frame.maxY - collapsedHeight, width: frame.width, height: collapsedHeight)
+        let height = collapsedHeight(fence)
+        return CGRect(x: frame.minX, y: frame.maxY - height, width: frame.width, height: height)
     }
 
     private func applyFrame(_ id: UUID) {
@@ -738,7 +756,8 @@ final class FenceCoordinator: ObservableObject {
     /// Keeps at least part of each fence's title bar on a screen.
     private func clampToScreens(_ id: UUID) {
         guard let fence = store.fence(id) else { return }
-        let title = CGRect(x: fence.frame.minX, y: fence.frame.maxY - Self.titleHeight, width: fence.frame.width, height: Self.titleHeight)
+        let titleHeight = FenceMetrics(fence).titleHeight
+        let title = CGRect(x: fence.frame.minX, y: fence.frame.maxY - titleHeight, width: fence.frame.width, height: titleHeight)
         let visible = NSScreen.screens.contains { $0.visibleFrame.intersection(title).width >= 60 }
         guard !visible, let screen = NSScreen.main?.visibleFrame else { return }
         store.update(id) { fence in
