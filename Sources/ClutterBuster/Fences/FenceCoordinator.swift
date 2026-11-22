@@ -21,6 +21,7 @@ final class FenceCoordinator: ObservableObject {
     private var liveFrames: [UUID: CGRect] = [:]
     private var interacting: Set<UUID> = []
     private var verifyTimer: Timer?
+    private var setup: FenceSetupController?
 
     init(store: FenceStore, desktop: DesktopIconService) {
         self.store = store
@@ -84,6 +85,21 @@ final class FenceCoordinator: ObservableObject {
         return fence.id
     }
 
+    /// Creates a fence that floats above app windows with its setup card until the user is done.
+    @discardableResult
+    func createFenceWithSetup() -> UUID {
+        setup?.finish()
+        let id = createFence()
+        guard let window = controllers[id]?.window else { return id }
+        let controller = FenceSetupController(fenceID: id, fenceWindow: window, coordinator: self)
+        controller.onFinish = { [weak self, weak controller] in
+            if self?.setup === controller { self?.setup = nil }
+        }
+        setup = controller
+        controller.begin()
+        return id
+    }
+
     func confirmDelete(_ id: UUID) {
         // Let the menu that triggered this finish closing before the alert takes over.
         DispatchQueue.main.async { [weak self] in
@@ -105,6 +121,7 @@ final class FenceCoordinator: ObservableObject {
 
     func deleteFence(_ id: UUID) {
         guard let fence = store.fence(id) else { return }
+        if setup?.fenceID == id { setup?.finish() }
         desktop.move(restorePositions(for: fence.items, leaving: fence))
         controllers.removeValue(forKey: id)?.close()
         store.remove(id)
@@ -308,6 +325,7 @@ final class FenceCoordinator: ObservableObject {
     private func applyFrame(_ id: UUID) {
         guard let fence = store.fence(id) else { return }
         controllers[id]?.window.setFrame(displayFrame(for: fence), display: true)
+        if setup?.fenceID == id { setup?.reposition() }
     }
 
     /// Center of the solid patch, where the fence's hidden icon stack sits.

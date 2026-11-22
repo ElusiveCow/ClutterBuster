@@ -20,7 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let search = SearchController(store: store) { [weak self] in self?.toolbar?.window }
         self.search = search
         let toolbar = ToolbarWindowController(store: store, search: search, actions: ToolbarActions(
-            newFence: { [weak self] in self?.coordinator.createFence() },
+            newFence: { [weak self] in self?.coordinator.createFenceWithSetup() },
             collapseAll: { [weak self] in self?.coordinator.setAllCollapsed(true) },
             expandAll: { [weak self] in self?.coordinator.setAllCollapsed(false) },
             openSettings: { [weak self] in self?.openSettings() }
@@ -39,6 +39,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let demoPath = UserDefaults.standard.string(forKey: "CBDemoPath") {
             let id = coordinator.createFence(title: "Demo")
             coordinator.addItems([URL(fileURLWithPath: demoPath)], to: id)
+        }
+
+        if UserDefaults.standard.bool(forKey: "CBDemoNewFence") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let id = self?.coordinator.createFenceWithSetup() else { return }
+                Log.write("demo: created fence \(id) with setup card")
+            }
         }
 
         if let demoSearch = UserDefaults.standard.string(forKey: "CBDemoSearch") {
@@ -78,7 +85,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func newFence() {
-        coordinator.createFence()
+        // Let the status menu finish closing so its click doesn't dismiss the setup card.
+        DispatchQueue.main.async { [weak self] in self?.coordinator.createFenceWithSetup() }
     }
 
     @objc private func toggleToolbar() {
