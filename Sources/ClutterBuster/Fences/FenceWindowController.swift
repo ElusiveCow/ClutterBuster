@@ -20,6 +20,8 @@ final class DesktopLevelWindow: NSWindow {
 
     /// Called for every mouse-down in the fence, before it's handled.
     var onMouseDown: (() -> Void)?
+    /// Called for Command-V while no text is being edited. Returns false if nothing was pasted.
+    var onPaste: (() -> Bool)?
 
     override func sendEvent(_ event: NSEvent) {
         switch event.type {
@@ -27,6 +29,15 @@ final class DesktopLevelWindow: NSWindow {
         default: break
         }
         super.sendEvent(event)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
+        if modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "v", !(firstResponder is NSText) {
+            if onPaste?() != true { NSSound.beep() }
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
     }
 }
 
@@ -55,6 +66,7 @@ final class FenceWindowController {
             .environmentObject(coordinator)
         window.contentView = FirstMouseHostingView(rootView: root)
         window.onMouseDown = { [weak coordinator] in coordinator?.raise(fenceID) }
+        window.onPaste = { [weak coordinator] in coordinator?.paste(into: fenceID) ?? false }
     }
 
     func close() {

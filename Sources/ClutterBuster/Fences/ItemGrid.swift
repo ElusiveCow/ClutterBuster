@@ -77,7 +77,7 @@ struct ItemGrid: View {
                     VStack(spacing: 6) {
                         Image(systemName: "tray.and.arrow.down")
                             .font(.system(size: 22 * scale))
-                        Text("Drag files here")
+                        Text("Drag files or links here")
                             .font(.system(size: 12 * scale, weight: .medium))
                     }
                     .foregroundStyle(style.bodySecondary)
@@ -128,11 +128,11 @@ struct ItemTile: View {
     @EnvironmentObject private var coordinator: FenceCoordinator
 
     var body: some View {
-        let exists = FileManager.default.fileExists(atPath: item.path)
+        let exists = !item.isFile || FileManager.default.fileExists(atPath: item.path)
         // A folder under a drag looks selected, like a Finder drop target.
         let selected = coordinator.selectedItemID == item.id || coordinator.folderDropTargetID == item.id
         VStack(spacing: 3) {
-            ItemIcon(path: item.path, size: metrics.icon)
+            TileIcon(item: item, size: metrics.icon)
                 .padding(3)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(selected ? 0.22 : 0)))
                 .padding(-3)
@@ -157,9 +157,18 @@ struct ItemTile: View {
                 item: item,
                 fenceID: fenceID,
                 iconSize: metrics.icon,
-                toolTip: exists ? item.displayName : "\(item.displayName) can't be found",
+                toolTip: toolTip(exists: exists),
                 coordinator: coordinator
             )
+        }
+    }
+
+    private func toolTip(exists: Bool) -> String {
+        switch item.kind {
+        case .file: exists ? item.displayName : "\(item.displayName) can't be found"
+        case .link: "\(item.displayName)\n\(item.link ?? "")"
+        case .note: String((item.text ?? "").prefix(300))
+        case .shortcut: "Shortcut \u{201C}\(item.displayName)\u{201D}. Double-click to run it."
         }
     }
 }

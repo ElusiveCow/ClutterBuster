@@ -33,7 +33,8 @@ struct ItemDragSource: NSViewRepresentable {
         view.iconSize = iconSize
         view.coordinator = coordinator
         view.toolTip = toolTip
-        view.isFolder = FolderDrop.isFolder(item.path)
+        view.isFolder = item.isFile && FolderDrop.isFolder(item.path)
+        coordinator.tileViews.setObject(view, forKey: item.id as NSUUID)
     }
 }
 
@@ -76,7 +77,7 @@ final class ItemDragView: NSView, NSDraggingSource {
         let point = convert(down.locationInWindow, from: nil)
         let frame = NSRect(x: point.x - iconSize / 2, y: point.y - iconSize / 2, width: iconSize, height: iconSize)
         let scale = window?.backingScaleFactor ?? 2
-        draggingItem.setDraggingFrame(frame, contents: IconProvider.shared.currentIcon(for: item.path, pointSize: iconSize, scale: scale))
+        draggingItem.setDraggingFrame(frame, contents: TileIcon.image(for: item, size: iconSize, scale: scale))
 
         let session = beginDraggingSession(with: [draggingItem], event: down, source: self)
         session.animatesToStartingPositionsOnCancelOrFail = false
@@ -86,7 +87,7 @@ final class ItemDragView: NSView, NSDraggingSource {
         defer { mouseDownEvent = nil }
         guard !isDragging, let item else { return }
         if event.clickCount >= 2 {
-            coordinator?.open(item)
+            coordinator?.open(item, in: fenceID)
         } else {
             coordinator?.selectedItemID = item.id
         }
@@ -163,10 +164,11 @@ final class ItemDragView: NSView, NSDraggingSource {
     }
 
     /// Move, or copy with Option held or across volumes, as Finder decides. A folder dropped
-    /// on its own tile isn't taken.
+    /// on its own tile isn't taken, and neither are installed apps, which stay where they are.
     private func dropOperation(_ sender: NSDraggingInfo) -> NSDragOperation {
         guard let item, isFolder, let dragged = draggedItems(sender), !dragged.urls.isEmpty,
-              dragged.itemID != item.id, !dragged.urls.contains(where: { $0.standardizedFileURL.path == item.path })
+              dragged.itemID != item.id, !dragged.urls.contains(where: { $0.standardizedFileURL.path == item.path }),
+              !dragged.urls.contains(where: FolderDrop.isInstalledApp)
         else { return [] }
         // Holding Option narrows the mask to copy; Command narrows it to generic, a move.
         let mask = sender.draggingSourceOperationMask
@@ -187,14 +189,15 @@ final class ItemDragView: NSView, NSDraggingSource {
     /// Read once per drag, since AppKit asks for the operation over and over during a hover.
     private var dragged: DraggedItems?
 
-    /// Files from Finder, or a fence item dragged from a tile.
+    /// Files from Finder, or a fence item dragged from a tile. Only file items can go into a
+    /// folder; links, notes and Shortcuts aren't files.
     private func draggedItems(_ sender: NSDraggingInfo) -> DraggedItems? {
         if let dragged, dragged.sequence == sender.draggingSequenceNumber { return dragged }
         let pasteboard = sender.draggingPasteboard
         var urls: [URL] = []
         var itemID: UUID?
         if let id = pasteboard.string(forType: .clutterBusterItem).flatMap(UUID.init(uuidString:)) {
-            guard let fenced = coordinator?.fencedItem(id) else { return nil }
+            guard let fenced = coordinator?.fencedItem(id), fenced.isFile else { return nil }
             urls = [fenced.url]
             itemID = id
         } else {
@@ -212,9 +215,22 @@ final class ItemDragView: NSView, NSDraggingSource {
     // MARK: Context menu
 
     override func menu(for event: NSEvent) -> NSMenu? {
+        guard let item else { return nil }
         let menu = NSMenu()
-        menu.addItem(withTitle: "Open", action: #selector(openItem), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Show in Finder", action: #selector(revealItem), keyEquivalent: "").target = self
+        switch item.kind {
+        case .file:
+            menu.addItem(withTitle: "Open", action: #selector(openItem), keyEquivalent: "").target = self
+            menu.addItem(withTitle: "Show in Finder", action: #selector(revealItem), keyEquivalent: "").target = self
+        case .link:
+            menu.addItem(withTitle: "Open in Browser", action: #selector(openItem), keyEquivalent: "").target = self
+            menu.addItem(withTitle: "Edit Link…", action: #selector(editLink), keyEquivalent: "").target = self
+            menu.addItem(withTitle: "Copy Link", action: #selector(copyLink), keyEquivalent: "").target = self
+        case .note:
+            menu.addItem(withTitle: "Edit Note…", action: #selector(openItem), keyEquivalent: "").target = self
+            menu.addItem(withTitle: "Copy Text", action: #selector(copyNote), keyEquivalent: "").target = self
+        case .shortcut:
+            menu.addItem(withTitle: "Run Shortcut", action: #selector(openItem), keyEquivalent: "").target = self
+        }
         menu.addItem(.separator())
         menu.addItem(withTitle: "Remove from Fence", action: #selector(removeItem), keyEquivalent: "").target = self
         return menu
@@ -222,7 +238,25 @@ final class ItemDragView: NSView, NSDraggingSource {
 
     @objc private func openItem() {
         guard let item else { return }
-        coordinator?.open(item)
+        coordinator?.open(item, in: fenceID)
+    }
+
+    @objc private func editLink() {
+        guard let item, let fenceID else { return }
+        // Let the menu finish closing before the dialog takes over.
+        DispatchQueue.main.async { [weak coordinator] in coordinator?.editLink(item.id, in: fenceID) }
+    }
+
+    @objc private func copyLink() {
+        guard let item, let link = item.link else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(link, forType: .string)
+    }
+
+    @objc private func copyNote() {
+        guard let item else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(item.text ?? "", forType: .string)
     }
 
     @objc private func revealItem() {

@@ -95,8 +95,9 @@ struct FenceView: View {
             .onChange(of: fence.textScale) { _, scale in
                 showBadge("\(Int((scale * 100).rounded()))%")
             }
+            // Files and apps from Finder, and links from a browser.
             .dropDestination(for: URL.self) { urls, _ in
-                coordinator.addItems(urls, to: fenceID)
+                coordinator.addDropped(urls, to: fenceID)
                 return true
             } isTargeted: { isDropTargeted = $0 }
         }
@@ -529,6 +530,14 @@ struct FenceMenu: View {
     var body: some View {
         // Color and transparency belong to Classic; other themes set their own.
         let isClassic = (fence.theme ?? themes.globalTheme) == .classic
+        Menu("Add") {
+            // Each waits for the menu to finish closing before its dialog or popover opens.
+            Button("Link…") { later { coordinator.promptForLink(fence.id) } }
+            Button("Note") { later { coordinator.addNote(to: fence.id) } }
+            Button("Shortcut…") { later { coordinator.chooseShortcuts(fence.id) } }
+            Divider()
+            Button("File or App…") { later { coordinator.chooseFiles(fence.id) } }
+        }
         Button("Fence Settings…", action: onSettings)
         Divider()
         Button("Rename…", action: onRename)
@@ -600,6 +609,10 @@ struct FenceMenu: View {
         Button(fence.isCollapsed ? "Expand" : "Collapse") { coordinator.toggleCollapse(fence.id) }
         Divider()
         Button("Delete Fence…", role: .destructive) { coordinator.confirmDelete(fence.id) }
+    }
+
+    private func later(_ action: @escaping @MainActor () -> Void) {
+        DispatchQueue.main.async { MainActor.assumeIsolated(action) }
     }
 }
 

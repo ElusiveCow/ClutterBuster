@@ -9,12 +9,16 @@ struct SearchResult: Identifiable {
     }
 
     let section: Section
-    let url: URL
+    /// The file, or a link's address. Notes and Shortcuts have none.
+    let url: URL?
     let name: String
     let subtitle: String
     let icon: NSImage
+    /// Set for links, notes and Shortcuts, which open and show through their fence.
+    var itemID: UUID?
 
-    var id: String { section.rawValue + url.path }
+    var id: String { section.rawValue + (itemID?.uuidString ?? url?.path ?? name) }
+    var isFile: Bool { itemID == nil }
 }
 
 /// Searches fence items, Desktop files that aren't in a fence, and the rest of the Mac
@@ -92,13 +96,26 @@ final class SearchService: ObservableObject {
         var fencedPaths: Set<String> = []
         for fence in store.fences {
             for item in fence.items {
-                fencedPaths.insert(item.path)
-                guard item.displayName.localizedCaseInsensitiveContains(text) else { continue }
-                fenceResults.append(SearchResult(
-                    section: .fences, url: item.url, name: item.displayName,
-                    subtitle: "In fence \u{201C}\(fence.title)\u{201D} \u{203A} \(fence.tabs.first { $0.id == item.tabID }?.name ?? fence.tabs[0].name)",
-                    icon: NSWorkspace.shared.icon(forFile: item.path)
-                ))
+                if item.isFile { fencedPaths.insert(item.path) }
+                guard item.matches(text) else { continue }
+                let place = "In fence \u{201C}\(fence.title)\u{201D} \u{203A} \(fence.tabs.first { $0.id == item.tabID }?.name ?? fence.tabs[0].name)"
+                if item.isFile {
+                    fenceResults.append(SearchResult(
+                        section: .fences, url: item.url, name: item.displayName, subtitle: place,
+                        icon: IconProvider.shared.plainIcon(for: item.path)
+                    ))
+                } else {
+                    let what: String = switch item.kind {
+                    case .link: item.webURL?.host() ?? "Link"
+                    case .note: "Note"
+                    default: item.kindName ?? ""
+                    }
+                    fenceResults.append(SearchResult(
+                        section: .fences, url: item.webURL, name: item.displayName,
+                        subtitle: "\(what) \u{00B7} \(place)",
+                        icon: TileIcon.image(for: item, size: 26, scale: 2), itemID: item.id
+                    ))
+                }
             }
         }
 
@@ -113,7 +130,7 @@ final class SearchService: ObservableObject {
             .map { SearchResult(section: .desktop, url: $0.url, name: $0.name, subtitle: "On the desktop", icon: NSWorkspace.shared.icon(forFile: $0.url.path)) }
 
         localResults = fenceResults + desktopResults
-        excludedPaths = Set(localResults.map { $0.url.standardizedFileURL.path })
+        excludedPaths = Set(localResults.filter(\.isFile).compactMap { $0.url?.standardizedFileURL.path })
         results = localResults
         startMacSearch(for: text)
     }

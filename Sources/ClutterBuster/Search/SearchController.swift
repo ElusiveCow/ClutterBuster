@@ -28,6 +28,11 @@ final class SearchController: NSObject, NSTextFieldDelegate {
     var holdsOpenUntil = Date.distantPast
     /// Shows a result in Finder. Fenced Desktop files have to be unhidden first.
     var reveal: (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
+    /// Opens a link, note or Shortcut found in a fence: in the browser, in its editor, or by
+    /// running it.
+    var openItem: (UUID) -> Void = { _ in }
+    /// Brings a link, note or Shortcut forward in its fence.
+    var showItem: (UUID) -> Void = { _ in }
 
     private let panel = DropdownPanel()
     private let width: CGFloat = 560
@@ -133,12 +138,13 @@ final class SearchController: NSObject, NSTextFieldDelegate {
     }
 
     private func open(_ result: SearchResult, reveal: Bool) {
-        if reveal {
-            self.reveal(result.url)
-        } else {
-            NSWorkspace.shared.open(result.url)
-        }
         close()
+        if let itemID = result.itemID {
+            // After closing, so a note's editor or the fence isn't closed along with the search.
+            if reveal { showItem(itemID) } else { openItem(itemID) }
+        } else if let url = result.url {
+            if reveal { self.reveal(url) } else { NSWorkspace.shared.open(url) }
+        }
     }
 
     private func updatePanel() {
@@ -328,7 +334,7 @@ private struct SearchResultsView: View {
             }
             Spacer(minLength: 0)
             Button { onReveal(result) } label: {
-                Image(systemName: "folder")
+                Image(systemName: result.isFile ? "folder" : "scope")
                     .font(.system(size: 13))
                     .foregroundStyle(style.bodyText.opacity(selected ? 0.9 : 0.55))
                     .frame(width: 28, height: 26)
@@ -336,7 +342,7 @@ private struct SearchResultsView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Show in Finder")
+            .help(result.isFile ? "Show in Finder" : "Show in Fence")
         }
         .padding(.leading, 10)
         .padding(.trailing, 6)

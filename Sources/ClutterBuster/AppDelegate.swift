@@ -25,7 +25,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let search = SearchController(store: store) { [weak self] in self?.toolbar?.window }
         search.reveal = { [weak self] url in self?.coordinator.revealInFinder(url) }
+        search.openItem = { [weak self] id in
+            guard let self, let item = self.coordinator.fencedItem(id) else { return }
+            self.coordinator.open(item)
+        }
+        search.showItem = { [weak self] id in self?.coordinator.showInFence(id) }
         self.search = search
+        NSApp.mainMenu = Self.editMenu()
         let toolbar = ToolbarWindowController(store: store, fences: coordinator, search: search, actions: ToolbarActions(
             newFence: { [weak self] in self?.coordinator.createFenceWithSetup() },
             collapseAll: { [weak self] in self?.coordinator.setAllCollapsed(true) },
@@ -96,6 +102,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: Menu bar
+
+    /// Never shown, since Clutter Buster has no menu bar of its own, but its shortcuts make
+    /// Copy, Paste, Undo and Select All work in notes and text fields.
+    private static func editMenu() -> NSMenu {
+        let main = NSMenu()
+        main.addItem(NSMenuItem(title: "Clutter Buster", action: nil, keyEquivalent: ""))
+        let editItem = main.addItem(withTitle: "Edit", action: nil, keyEquivalent: "")
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = edit
+        return main
+    }
 
     private func buildStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)

@@ -61,6 +61,10 @@ final class FenceCoordinator: ObservableObject {
     private var revealedAt = Date.distantPast
     private var rehideTimer: Timer?
     private static let migratedKey = "CBMigratedToHiddenFlag"
+    /// Each item's tile, for popovers that point at it.
+    let tileViews = NSMapTable<NSUUID, NSView>.strongToWeakObjects()
+    var notePopover: NSPopover?
+    var noteCloseObserver: NSObjectProtocol?
 
     init(store: FenceStore, desktop: DesktopIconService) {
         self.store = store
@@ -195,6 +199,7 @@ final class FenceCoordinator: ObservableObject {
         if setup?.fenceID == id { setup?.finish() }
         if raisedFenceID == id { lowerRaisedFence() }
         if settingsFenceID == id { closeSettings() }
+        if noteEditor?.fenceID == id { closeNoteEditor() }
         unhide(fence.items)
         controllers.removeValue(forKey: id)?.close()
         tabFrames[id] = nil
@@ -400,6 +405,7 @@ final class FenceCoordinator: ObservableObject {
         raisedFenceID = nil
         raisedOutsideClicks.stop()
         if settingsFenceID == id { closeSettings() }
+        if noteEditor?.fenceID == id { closeNoteEditor() }
         guard setup?.fenceID != id else { return }
         controllers[id]?.window.level = DesktopLevelWindow.desktopLevel
         Log.write("lowered fence \(id)")
@@ -608,6 +614,7 @@ final class FenceCoordinator: ObservableObject {
 
     func removeItem(_ itemID: UUID, from id: UUID) {
         guard let fence = store.fence(id), let item = fence.items.first(where: { $0.id == itemID }) else { return }
+        if noteEditor?.itemID == itemID { closeNoteEditor() }
         store.update(id) { $0.items.removeAll { $0.id == itemID } }
         Log.write("removed \"\(item.finderName)\" from \"\(fence.title)\"")
         unhide([item])
@@ -649,7 +656,11 @@ final class FenceCoordinator: ObservableObject {
         if let target = store.fences.first(where: { $0.id != sourceID && displayFrame(for: $0).contains(point) }) {
             let tab = tab(at: point, in: target)
             Log.write("  decision: move to fence \"\(target.title)\"\(tab.map { ", tab \"\($0.name)\"" } ?? "")")
-            addItems([item.url], to: target.id, tab: tab?.id)
+            if item.isFile {
+                addItems([item.url], to: target.id, tab: tab?.id)
+            } else {
+                moveNonFileItem(item, from: sourceID, to: target.id, tab: tab?.id)
+            }
             return
         }
 
@@ -659,6 +670,12 @@ final class FenceCoordinator: ObservableObject {
         }
         if let blocker = desktopBlocker(at: point) {
             Log.write("  decision: covered by \(blocker), no change")
+            return
+        }
+        // A link, note or Shortcut has nowhere to go on the Desktop, and a note dragged off
+        // by accident would lose its text. Remove from Fence takes them out.
+        guard item.isFile else {
+            Log.write("  decision: a \(item.kind.rawValue) has no Desktop icon, so it stays in its fence")
             return
         }
 
@@ -686,6 +703,10 @@ final class FenceCoordinator: ObservableObject {
     /// The fenced item with this ID, in whichever fence holds it.
     func fencedItem(_ itemID: UUID) -> FenceItem? {
         store.fences.lazy.compactMap { $0.items.first { $0.id == itemID } }.first
+    }
+
+    func fenceID(holding itemID: UUID) -> UUID? {
+        store.fences.first { $0.items.contains { $0.id == itemID } }?.id
     }
 
     private struct FolderDropJob {
@@ -803,13 +824,35 @@ final class FenceCoordinator: ObservableObject {
         NSWorkspace.shared.open(item.url)
     }
 
-    func open(_ item: FenceItem) {
-        // The opened app comes forward; the fence goes back under it.
-        lowerRaisedFence()
-        NSWorkspace.shared.open(item.url)
+    /// Opens a file or app, opens a link in the default browser, edits a note or runs a
+    /// Shortcut. `fenceID` is the fence showing the item, which a note's editor points into.
+    func open(_ item: FenceItem, in fenceID: UUID? = nil) {
+        switch item.kind {
+        case .file:
+            // The opened app comes forward; the fence goes back under it.
+            lowerRaisedFence()
+            NSWorkspace.shared.open(item.url)
+        case .link:
+            guard let url = item.webURL else {
+                Log.write("link: \"\(item.link ?? "")\" isn't a web address it can open")
+                NSSound.beep()
+                return
+            }
+            lowerRaisedFence()
+            Log.write("link: opening \(url.absoluteString)")
+            NSWorkspace.shared.open(url)
+        case .note:
+            guard let holder = fenceID ?? self.fenceID(holding: item.id) else { return }
+            editNote(item.id, in: holder)
+        case .shortcut:
+            guard let name = item.title else { return }
+            lowerRaisedFence()
+            ShortcutsTool.run(name)
+        }
     }
 
     func revealInFinder(_ item: FenceItem) {
+        guard item.isFile else { return }
         lowerRaisedFence()
         revealInFinder(item.url)
     }
@@ -1066,6 +1109,10 @@ final class FenceCoordinator: ObservableObject {
     }
 
     // MARK: Windows
+
+    func window(of id: UUID) -> NSWindow? {
+        controllers[id]?.window
+    }
 
     private func openWindow(for fence: Fence) {
         let controller = FenceWindowController(fenceID: fence.id, coordinator: self)

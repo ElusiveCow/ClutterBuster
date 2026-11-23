@@ -20,21 +20,135 @@ enum FenceColor: String, Codable, CaseIterable, Identifiable {
     var titleBar: NSColor { body.blended(withFraction: 0.25, of: .black) ?? body }
 }
 
+/// What a fence item is. Only files are on disk; the rest live in the layout.
+enum FenceItemKind: String, Codable, CaseIterable {
+    case file, link, note, shortcut
+
+    /// The order "Kind" sorts them in, files first.
+    var sortRank: Int { Self.allCases.firstIndex(of: self) ?? 0 }
+}
+
 struct FenceItem: Codable, Identifiable {
     var id = UUID()
-    var path: String
+    var kind: FenceItemKind = .file
+    /// The file's path. Empty for links, notes and Shortcuts.
+    var path = ""
     /// Finder position the icon had when it joined a fence, where it goes back when it leaves
     /// or the app quits. Nil for items that aren't on the Desktop.
     var originalDesktopPosition: CGPoint?
     var addedAt = Date()
     /// The tab the item is shown in. Older layouts lack it; `Fence` assigns the first tab.
     var tabID: UUID?
+    /// A link's title, or a Shortcut's name.
+    var title: String?
+    /// A link's address.
+    var link: String?
+    /// A note's text.
+    var text: String?
+    /// When a note's text last changed.
+    var editedAt: Date?
 
+    static func link(_ url: URL, title: String?, tabID: UUID?) -> FenceItem {
+        let title = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return FenceItem(kind: .link, tabID: tabID, title: title?.isEmpty == false ? title : url.host(), link: url.absoluteString)
+    }
+
+    static func note(_ text: String = "", tabID: UUID?) -> FenceItem {
+        FenceItem(kind: .note, tabID: tabID, text: text, editedAt: Date())
+    }
+
+    static func shortcut(_ name: String, tabID: UUID?) -> FenceItem {
+        FenceItem(kind: .shortcut, tabID: tabID, title: name)
+    }
+
+    var isFile: Bool { kind == .file }
     var url: URL { URL(fileURLWithPath: path) }
-    var displayName: String { FileManager.default.displayName(atPath: path) }
+    var webURL: URL? { kind == .link ? link.flatMap(URL.init(string:)) : nil }
+
+    var displayName: String {
+        switch kind {
+        case .file: FileManager.default.displayName(atPath: path)
+        case .link: title ?? webURL?.host() ?? link ?? "Link"
+        case .note: Self.firstLine(of: text ?? "") ?? "Note"
+        case .shortcut: title ?? "Shortcut"
+        }
+    }
+
     /// The name Finder uses for the item on the Desktop.
-    var finderName: String { url.lastPathComponent }
-    var isOnDesktop: Bool { DesktopIconService.isOnDesktop(url) }
+    var finderName: String { isFile ? url.lastPathComponent : displayName }
+    /// Only Desktop files are ever hidden, so nothing else may claim to be on the Desktop.
+    var isOnDesktop: Bool { isFile && !path.isEmpty && DesktopIconService.isOnDesktop(url) }
+
+    /// What "Kind" calls the new kinds. Files use Finder's description of their type.
+    var kindName: String? {
+        switch kind {
+        case .file: nil
+        case .link: "Link"
+        case .note: "Note"
+        case .shortcut: "Shortcut"
+        }
+    }
+
+    /// Whether search text finds this item: a file by its name, a link by its title or
+    /// address, a note by its text and a Shortcut by its name.
+    func matches(_ query: String) -> Bool {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return false }
+        switch kind {
+        case .file, .shortcut: return displayName.localizedCaseInsensitiveContains(query)
+        case .link: return [title, link].contains { $0?.localizedCaseInsensitiveContains(query) == true }
+        case .note: return (text ?? "").localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    static func firstLine(of text: String) -> String? {
+        text.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty }
+    }
+
+    /// A web address from pasted or typed text. Strictly, only text starting with http(s)://
+    /// or www. counts, so a pasted file name isn't mistaken for one; otherwise anything that
+    /// looks like a host name, such as "apple.com", gets https:// added.
+    static func webURL(from text: String, strict: Bool) -> URL? {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !text.contains(where: \.isWhitespace) else { return nil }
+        let lower = text.lowercased()
+        let candidate: String
+        if lower.hasPrefix("http://") || lower.hasPrefix("https://") {
+            candidate = text
+        } else if lower.hasPrefix("www.") {
+            candidate = "https://" + text
+        } else if !strict, !text.contains(":"), !text.contains("@"),
+                  let dot = text.firstIndex(of: "."), dot < (text.firstIndex(of: "/") ?? text.endIndex) {
+            candidate = "https://" + text
+        } else {
+            return nil
+        }
+        guard let url = URL(string: candidate), let host = url.host(), host.contains(".") || host == "localhost" else { return nil }
+        return url
+    }
+}
+
+extension FenceItem {
+    /// Layouts from before links, notes and Shortcuts have no kind; their items are files.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        let kindName = try? container.decodeIfPresent(String.self, forKey: .kind)
+        kind = kindName.flatMap(FenceItemKind.init(rawValue:)) ?? .file
+        if let kindName, FenceItemKind(rawValue: kindName) == nil {
+            Log.write("an item has the kind \"\(kindName)\", which this version doesn't have; it's treated as a file")
+        }
+        path = try container.decodeIfPresent(String.self, forKey: .path) ?? ""
+        originalDesktopPosition = try container.decodeIfPresent(CGPoint.self, forKey: .originalDesktopPosition)
+        addedAt = try container.decodeIfPresent(Date.self, forKey: .addedAt) ?? Date()
+        tabID = try container.decodeIfPresent(UUID.self, forKey: .tabID)
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        link = try container.decodeIfPresent(String.self, forKey: .link)
+        text = try container.decodeIfPresent(String.self, forKey: .text)
+        editedAt = try container.decodeIfPresent(Date.self, forKey: .editedAt)
+    }
 }
 
 struct Fence: Codable, Identifiable {
