@@ -85,8 +85,7 @@ final class FenceCoordinator: ObservableObject {
 
     func minimumSize(for fence: Fence) -> CGSize {
         let metrics = FenceMetrics(fence)
-        let tabs = fence.isStickyNote ? 0 : metrics.tabStripHeight(fence)
-        return CGSize(width: 180, height: metrics.titleHeight + tabs + metrics.minimumGridHeight)
+        return CGSize(width: 180, height: metrics.titleHeight + metrics.tabStripHeight(fence) + metrics.minimumGridHeight)
     }
 
     /// The most tab rows a fence this tall can show: the strip takes at most half the space
@@ -168,7 +167,7 @@ final class FenceCoordinator: ObservableObject {
             iconsPerRow: AppSettings.defaultIconsPerRow,
             opacity: AppSettings.defaultOpacity
         )
-        fence.style = style
+        fence.changeStyle(to: style)
         if style == .stickyNote { fence.paper = .yellow }
         store.add(fence)
         openWindow(for: fence)
@@ -562,17 +561,19 @@ final class FenceCoordinator: ObservableObject {
     // MARK: Tabs
 
     func selectTab(_ id: UUID, _ tabID: UUID) {
+        guard let fence = store.fence(id), fence.selectedTabID != tabID else { return }
+        // The note shown is saved into its own tab before another takes its place.
+        if fence.isStickyNote { stickyTextView(id)?.saveNow() }
         store.update(id) { $0.selectedTabID = tabID }
     }
 
-    /// Adds a tab after the last one, selects it and returns its ID.
+    /// Adds a tab after the last one, selects it and returns its ID. A sticky note's tab
+    /// starts with an empty note.
     @discardableResult
     func addTab(_ id: UUID) -> UUID? {
         guard let fence = store.fence(id) else { return nil }
-        let names = Set(fence.tabs.map(\.name))
-        var number = fence.tabs.count + 1
-        while names.contains("Tab \(number)") { number += 1 }
-        let tab = FenceTab(name: "Tab \(number)")
+        if fence.isStickyNote { stickyTextView(id)?.saveNow() }
+        let tab = FenceTab(name: fence.nextTabName(), note: fence.isStickyNote ? "" : nil)
         store.update(id) { fence in
             fence.tabs.append(tab)
             fence.selectedTabID = tab.id
@@ -587,6 +588,39 @@ final class FenceCoordinator: ObservableObject {
             guard let index = fence.tabs.firstIndex(where: { $0.id == tabID }) else { return }
             fence.tabs[index].name = trimmed
         }
+    }
+
+    /// Deletes a tab, asking first when it's a sticky note's tab with text. The last tab stays.
+    func confirmDeleteTab(_ id: UUID, _ tabID: UUID) {
+        guard let fence = store.fence(id), fence.tabs.count > 1, let tab = fence.tabs.first(where: { $0.id == tabID }) else { return }
+        guard fence.isStickyNote else { return deleteTab(id, tabID) }
+        if fence.currentTab.id == tabID { stickyTextView(id)?.saveNow() }
+        guard Self.deletingTabNeedsConfirmation(store.fence(id) ?? fence, tabID) else {
+            Log.write("sticky note: deleted empty tab \"\(tab.name)\" of \"\(fence.title)\"")
+            return deleteTab(id, tabID)
+        }
+        // Let the menu that triggered this finish closing before the alert takes over.
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.store.fence(id)?.tabs.contains(where: { $0.id == tabID }) == true else { return }
+                let alert = NSAlert()
+                alert.messageText = "Delete note \u{201C}\(tab.name)\u{201D}?"
+                alert.informativeText = "Its text will be deleted."
+                let delete = alert.addButton(withTitle: "Delete")
+                delete.hasDestructiveAction = true
+                alert.addButton(withTitle: "Cancel")
+                NSApp.activate(ignoringOtherApps: true)
+                if alert.runModal() == .alertFirstButtonReturn {
+                    Log.write("sticky note: deleted tab \"\(tab.name)\" of \"\(fence.title)\" and its text")
+                    self.deleteTab(id, tabID)
+                }
+            }
+        }
+    }
+
+    /// Only a sticky note's tab with text in it asks before it goes; spaces alone don't count.
+    nonisolated static func deletingTabNeedsConfirmation(_ fence: Fence, _ tabID: UUID) -> Bool {
+        fence.isStickyNote && !fence.note(in: tabID).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Removes a tab and moves its items into the first remaining tab. The last tab stays.

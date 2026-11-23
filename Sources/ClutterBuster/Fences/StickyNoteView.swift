@@ -45,19 +45,94 @@ struct StickyNoteLook: Equatable {
     var done: NSColor { text.withAlphaComponent(0.45) }
 }
 
-/// A sticky note fence's body: one note filling the fence below its title bar. The text is
-/// saved a moment after typing stops, when the note loses focus, when it goes away and when
-/// the app quits.
+/// A sticky note fence's body: the selected tab's note filling the fence below its tabs.
+/// The text is saved a moment after typing stops, when the note loses focus, before another
+/// tab is shown, when it goes away and when the app quits.
 struct StickyNoteView: NSViewRepresentable {
     let fenceID: UUID
+    let tabID: UUID
+    /// Every tab of the fence; notes of tabs that are gone are let go.
+    let tabIDs: [UUID]
     let note: String
     let look: StickyNoteLook
     /// Room kept under the last line so it can scroll clear of the hover controls.
     let bottomInset: CGFloat
     let fences: FenceCoordinator
 
-    func makeNSView(context: Context) -> StickyNoteScrollView {
-        let scroll = StickyNoteScrollView()
+    func makeNSView(context: Context) -> StickyNotePages {
+        let pages = StickyNotePages()
+        update(pages)
+        return pages
+    }
+
+    func updateNSView(_ pages: StickyNotePages, context: Context) {
+        update(pages)
+    }
+
+    private func update(_ pages: StickyNotePages) {
+        let textView = pages.show(tabID, bottomInset: bottomInset) { tabID in
+            let textView = StickyNoteTextView(look: look)
+            textView.tabID = tabID
+            textView.string = note
+            textView.restyle()
+            textView.onSave = { [weak fences] text in fences?.setStickyNote(fenceID, tab: tabID, text) }
+            return textView
+        }
+        textView.apply(look)
+        textView.show(note)
+        pages.removePages(notIn: Set(tabIDs))
+        fences.stickyTextViews.setObject(textView, forKey: fenceID as NSUUID)
+    }
+
+    static func dismantleNSView(_ pages: StickyNotePages, coordinator: ()) {
+        pages.saveAll()
+    }
+}
+
+/// One note per tab, each in its own scroll view, so each keeps its own scroll position,
+/// selection and undo history. Only the selected tab's note shows.
+final class StickyNotePages: NSView {
+    private var pages: [UUID: StickyNoteScrollView] = [:]
+    private var currentTabID: UUID?
+
+    override var isFlipped: Bool { true }
+
+    /// Shows the note of `tabID`, made by `make` the first time. The note it replaces is
+    /// saved first, and the caret follows to the new one if it was in the old.
+    func show(_ tabID: UUID, bottomInset: CGFloat, make: (UUID) -> StickyNoteTextView) -> StickyNoteTextView {
+        let scroll = pages[tabID] ?? makePage(make(tabID), bottomInset: bottomInset)
+        pages[tabID] = scroll
+        if scroll.contentInsets.bottom != bottomInset {
+            scroll.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: bottomInset, right: 0)
+        }
+        let textView = scroll.documentView as! StickyNoteTextView
+        guard currentTabID != tabID else { return textView }
+        let old = currentTabID.flatMap { pages[$0] }
+        let oldText = old?.documentView as? StickyNoteTextView
+        let hadFocus = oldText != nil && window?.firstResponder === oldText
+        oldText?.saveNow()
+        old?.isHidden = true
+        scroll.isHidden = false
+        currentTabID = tabID
+        if hadFocus { window?.makeFirstResponder(textView) }
+        return textView
+    }
+
+    func removePages(notIn tabIDs: Set<UUID>) {
+        for (tabID, scroll) in pages where !tabIDs.contains(tabID) {
+            (scroll.documentView as? StickyNoteTextView)?.saveNow()
+            scroll.removeFromSuperview()
+            pages[tabID] = nil
+        }
+    }
+
+    func saveAll() {
+        for scroll in pages.values { (scroll.documentView as? StickyNoteTextView)?.saveNow() }
+    }
+
+    private func makePage(_ textView: StickyNoteTextView, bottomInset: CGFloat) -> StickyNoteScrollView {
+        let scroll = StickyNoteScrollView(frame: bounds)
+        scroll.autoresizingMask = [.width, .height]
         scroll.drawsBackground = false
         scroll.borderType = .noBorder
         scroll.hasVerticalScroller = true
@@ -66,38 +141,34 @@ struct StickyNoteView: NSViewRepresentable {
         scroll.scrollerStyle = .overlay
         scroll.automaticallyAdjustsContentInsets = false
         scroll.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: bottomInset, right: 0)
-
-        let textView = StickyNoteTextView(look: look)
         textView.autoresizingMask = [.width]
-        textView.string = note
-        textView.restyle()
-        let fenceID = fenceID
-        textView.onSave = { [weak fences] text in fences?.setStickyNote(fenceID, text) }
+        textView.frame = NSRect(origin: .zero, size: NSSize(width: scroll.contentSize.width, height: 0))
         scroll.documentView = textView
-        fences.stickyTextViews.setObject(textView, forKey: fenceID as NSUUID)
+        scroll.isHidden = true
+        addSubview(scroll)
         return scroll
-    }
-
-    func updateNSView(_ scroll: StickyNoteScrollView, context: Context) {
-        guard let textView = scroll.documentView as? StickyNoteTextView else { return }
-        textView.apply(look)
-        textView.show(note)
-        if scroll.contentInsets.bottom != bottomInset {
-            scroll.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: bottomInset, right: 0)
-        }
-    }
-
-    static func dismantleNSView(_ scroll: StickyNoteScrollView, coordinator: ()) {
-        (scroll.documentView as? StickyNoteTextView)?.saveNow()
     }
 }
 
 /// Keeps the note at least as tall as what shows of it, so the ruled lines reach the bottom
 /// and a click below the last line still lands in the note.
 final class StickyNoteScrollView: NSScrollView {
+    /// Always overlay: with a mouse connected, AppKit switches to legacy scrollers, whose
+    /// opaque track would cover the side of the note.
+    override var scrollerStyle: NSScroller.Style {
+        get { .overlay }
+        set { super.scrollerStyle = .overlay }
+    }
+
     override func tile() {
         super.tile()
         guard let textView = documentView as? NSTextView else { return }
+        // A note made for a tab while the fence is already showing never gets the resize
+        // that would widen it from nothing.
+        let width = contentView.bounds.width
+        if textView.frame.width != width {
+            textView.setFrameSize(NSSize(width: width, height: textView.frame.height))
+        }
         let height = max(contentView.bounds.height - contentInsets.top - contentInsets.bottom, 0)
         if textView.minSize.height != height {
             textView.minSize = NSSize(width: 0, height: height)
@@ -110,8 +181,12 @@ final class StickyNoteScrollView: NSScrollView {
 /// each marker is drawn invisible, as wide as a box, and a box is drawn over it.
 final class StickyNoteTextView: NSTextView, NSTextViewDelegate {
     private(set) var look: StickyNoteLook
+    /// The tab whose note this is.
+    var tabID: UUID?
     var onSave: (String) -> Void = { _ in }
     private var saveWork: DispatchWorkItem?
+    /// Its own, rather than the window's, so undo never reaches into another tab's note.
+    private let undo = UndoManager()
 
     /// Typing that hasn't been saved yet, which a newer note from the store mustn't replace.
     var hasUnsavedChanges: Bool { saveWork != nil }
@@ -167,6 +242,8 @@ final class StickyNoteTextView: NSTextView, NSTextViewDelegate {
     func show(_ note: String) {
         guard !hasUnsavedChanges, note != string else { return }
         string = note
+        // Its undo steps were for the text just replaced.
+        undo.removeAllActions()
         restyle()
     }
 
@@ -370,6 +447,8 @@ final class StickyNoteTextView: NSTextView, NSTextViewDelegate {
 
     // MARK: NSTextViewDelegate
 
+    func undoManager(for view: NSTextView) -> UndoManager? { undo }
+
     func textDidChange(_ notification: Notification) {
         restyle()
         scheduleSave()
@@ -420,9 +499,10 @@ extension FenceCoordinator {
         stickyTextViews.object(forKey: id as NSUUID)
     }
 
-    func setStickyNote(_ id: UUID, _ text: String) {
-        guard let fence = store.fence(id), fence.isStickyNote, fence.note != text else { return }
-        store.update(id) { $0.note = text }
+    func setStickyNote(_ id: UUID, tab tabID: UUID, _ text: String) {
+        guard let fence = store.fence(id), fence.isStickyNote, fence.tabs.contains(where: { $0.id == tabID }),
+              fence.note(in: tabID) != text else { return }
+        store.update(id) { $0.setNote(text, in: tabID) }
     }
 
     /// Saves typing not yet saved in every note, as when quitting.
@@ -439,6 +519,19 @@ extension FenceCoordinator {
         Log.write("sticky note: \"\(fence.title)\" paper set to \(paper?.name ?? "the theme")")
     }
 
+    /// Nil makes the tab use the fence's paper.
+    func setTabPaper(_ id: UUID, _ tabID: UUID, _ paper: TabPaper?) {
+        guard let fence = store.fence(id), fence.isStickyNote,
+              let index = fence.tabs.firstIndex(where: { $0.id == tabID }), fence.tabs[index].paper != paper else { return }
+        store.update(id) { $0.tabs[index].paper = paper }
+        let name = switch paper {
+        case nil: "the fence's"
+        case .color(let color): color.name
+        case .theme: "the theme"
+        }
+        Log.write("sticky note: tab \"\(fence.tabs[index].name)\" of \"\(fence.title)\" paper set to \(name)")
+    }
+
     /// Switches a fence between items and a note, as the setup card does. A fence holding
     /// items keeps them. A default title follows the style.
     func setStyle(_ id: UUID, _ style: FenceStyle) {
@@ -450,23 +543,25 @@ extension FenceCoordinator {
         }
         store.update(id) { fence in
             if fence.title == Self.defaultTitle(for: fence.style) { fence.title = Self.defaultTitle(for: style) }
-            fence.style = style
+            fence.changeStyle(to: style)
             if style == .stickyNote, fence.paper == nil { fence.paper = .yellow }
         }
         Log.write("fence \(id) is now \(style == .stickyNote ? "a sticky note" : "a fence of files")")
         fitToContent(id)
     }
 
-    /// Raises the fence and puts the caret in its note, selecting `range` if given.
-    func focusStickyNote(_ id: UUID, select range: NSRange? = nil) {
+    /// Raises the fence and puts the caret in a tab's note (the selected tab's by default),
+    /// selecting `range` if given.
+    func focusStickyNote(_ id: UUID, tab tabID: UUID? = nil, select range: NSRange? = nil) {
         guard let fence = store.fence(id), fence.isStickyNote else { return }
         setFencesHidden(false)
         if fence.isCollapsed { toggleCollapse(id) }
+        if let tabID, fence.tabs.contains(where: { $0.id == tabID }) { selectTab(id, tabID) }
+        let wanted = store.fence(id)?.currentTab.id
         raise(id)
         focus(id)
-        // An expanded fence makes its note on the next update.
-        DispatchQueue.main.async { [weak self] in
-            guard let textView = self?.stickyTextView(id), let window = textView.window else { return }
+        whenStickyNoteShows(id, tab: wanted) { textView in
+            guard let window = textView.window else { return }
             window.makeKey()
             window.makeFirstResponder(textView)
             guard let range else { return }
@@ -476,6 +571,25 @@ extension FenceCoordinator {
             textView.setSelectedRange(selection)
             textView.scrollRangeToVisible(selection)
             if selection.length > 0 { textView.showFindIndicator(for: selection) }
+        }
+    }
+
+    /// Runs `action` once the fence shows the note of `tabID`: an expanded fence or a newly
+    /// selected tab makes it on a coming update.
+    private func whenStickyNoteShows(_ id: UUID, tab tabID: UUID?, tries: Int = 20, _ action: @escaping (StickyNoteTextView) -> Void) {
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if let textView = self.stickyTextView(id), tabID == nil || textView.tabID == tabID, textView.window != nil {
+                    action(textView)
+                } else if tries > 0 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
+                        MainActor.assumeIsolated { self.whenStickyNoteShows(id, tab: tabID, tries: tries - 1, action) }
+                    }
+                } else {
+                    Log.write("sticky note: fence \(id) didn't show the note of tab \(tabID?.uuidString ?? "?")")
+                }
+            }
         }
     }
 

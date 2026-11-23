@@ -32,8 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         search.showItem = { [weak self] id in self?.coordinator.showInFence(id) }
         search.showNote = { [weak self] match in
-            Log.write("search: showing line \(match.line + 1) of sticky note \(match.fenceID)")
-            self?.coordinator.focusStickyNote(match.fenceID, select: match.range)
+            Log.write("search: showing line \(match.line + 1) of tab \(match.tabID) of sticky note \(match.fenceID)")
+            self?.coordinator.focusStickyNote(match.fenceID, tab: match.tabID, select: match.range)
         }
         self.search = search
         NSApp.mainMenu = Self.editMenu()

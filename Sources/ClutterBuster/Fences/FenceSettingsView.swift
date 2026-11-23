@@ -27,7 +27,7 @@ struct FenceSettingsForm: View {
 
     private func content(_ fence: Fence) -> some View {
         // A sticky note on paper doesn't use its theme.
-        let usesTheme = !fence.isStickyNote || fence.paper == nil
+        let usesTheme = fence.currentPaper == nil
         return VStack(alignment: .leading, spacing: 12) {
             if showsStyle {
                 HStack(spacing: 5) {
@@ -82,7 +82,7 @@ struct FenceSettingsForm: View {
                 SettingsSection("Title style") {
                     TitleStyleEditor(fenceID: fenceID)
                 }
-                if fence.holdsItems { tabsSection(fence) }
+                tabsSection(fence)
                 spacesSection(fence)
             }
         }

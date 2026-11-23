@@ -110,10 +110,10 @@ struct ThemeStyle {
     /// Small capsule buttons drawn on the title bar color (the toolbar uses these).
     var titleControl: Color { titleText.opacity(0.13) }
 
-    /// The style a fence draws with: a sticky note's paper, else its own theme, or the global
-    /// one when it has none.
+    /// The style a fence draws with: the paper of a sticky note's tab shown, else its own
+    /// theme, or the global one when it has none.
     static func resolve(_ fence: Fence, global: FenceTheme) -> ThemeStyle {
-        if fence.isStickyNote, let paper = fence.paper { return .paper(paper) }
+        if let paper = fence.currentPaper { return .paper(paper) }
         return of(fence.theme ?? global, for: fence)
     }
 

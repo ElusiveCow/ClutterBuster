@@ -26,7 +26,8 @@ final class StickyNoteTests: XCTestCase {
     func testOldFenceDecodesAsItems() throws {
         let fence = try JSONDecoder().decode(Fence.self, from: Data(oldFence.utf8))
         XCTAssertEqual(fence.style, .items)
-        XCTAssertEqual(fence.note, "")
+        XCTAssertEqual(fence.tabs.map(\.name), ["General"])
+        XCTAssertNil(fence.tabs[0].note, "item fences' tabs have no note")
         XCTAssertNil(fence.paper)
         XCTAssertTrue(fence.holdsItems)
         XCTAssertFalse(fence.isStickyNote)
@@ -37,13 +38,14 @@ final class StickyNoteTests: XCTestCase {
 
     func testStickyNoteRoundTrips() throws {
         var fence = Fence(title: "CB TEST Sticky", frame: CGRect(x: 0, y: 0, width: 280, height: 300), color: .slate, iconsPerRow: 4)
-        fence.style = .stickyNote
+        fence.changeStyle(to: .stickyNote)
         fence.paper = .pink
-        fence.note = "Groceries\n- [ ] eggs\n- [x] milk"
+        let tab = fence.tabs[0].id
+        fence.setNote("Groceries\n- [ ] eggs\n- [x] milk", in: tab)
         let decoded = try JSONDecoder().decode(Fence.self, from: JSONEncoder().encode(fence))
         XCTAssertEqual(decoded.style, .stickyNote)
         XCTAssertEqual(decoded.paper, .pink)
-        XCTAssertEqual(decoded.note, fence.note)
+        XCTAssertEqual(decoded.note(in: tab), "Groceries\n- [ ] eggs\n- [x] milk")
 
         fence.paper = nil
         XCTAssertNil(try JSONDecoder().decode(Fence.self, from: JSONEncoder().encode(fence)).paper, "no paper is Use Theme")
@@ -56,7 +58,7 @@ final class StickyNoteTests: XCTestCase {
         let fence = try JSONDecoder().decode(Fence.self, from: Data(json.utf8))
         XCTAssertEqual(fence.style, .stickyNote)
         XCTAssertNil(fence.paper)
-        XCTAssertEqual(fence.note, "hi")
+        XCTAssertEqual(fence.tabs[0].note, "hi")
     }
 
     // MARK: Files stay out
@@ -223,13 +225,14 @@ final class StickyNoteTests: XCTestCase {
     func testSearchFindsEachMatchingLine() {
         let id = UUID()
         let note = "Groceries\n- [x] Milk\nmilkshake\nnothing"
-        let found = NoteMatch.find("milk", in: note, fenceID: id)
+        let tab = UUID()
+        let found = NoteMatch.find("milk", in: note, fenceID: id, tabID: tab)
         XCTAssertEqual(found.map(\.text), ["Milk", "milkshake"])
         XCTAssertEqual(found.map(\.match.line), [1, 2])
         XCTAssertEqual(found[0].match.range, NSRange(location: 16, length: 4))
         XCTAssertEqual(found[1].match.range, NSRange(location: 21, length: 4))
-        XCTAssertTrue(NoteMatch.find("[x]", in: "- [x] a", fenceID: id).isEmpty, "markers aren't searched")
-        XCTAssertTrue(NoteMatch.find("  ", in: note, fenceID: id).isEmpty)
+        XCTAssertTrue(NoteMatch.find("[x]", in: "- [x] a", fenceID: id, tabID: tab).isEmpty, "markers aren't searched")
+        XCTAssertTrue(NoteMatch.find("  ", in: note, fenceID: id, tabID: tab).isEmpty)
     }
 }
 
@@ -253,24 +256,25 @@ final class StickyNoteLayoutTests: XCTestCase {
         let screen = ScreenInfo(id: "A", name: "Built-in", frame: CGRect(x: 0, y: 0, width: 1800, height: 1169), visibleFrame: CGRect(x: 0, y: 0, width: 1800, height: 1130))
         let store = FenceStore(fileURL: url)
         var fence = Fence(title: "CB TEST Sticky", frame: CGRect(x: 100, y: 100, width: 280, height: 300), color: .slate, iconsPerRow: 4)
-        fence.style = .stickyNote
+        fence.changeStyle(to: .stickyNote)
         fence.paper = .blue
-        fence.note = "- [ ] one"
+        let tab = fence.tabs[0].id
+        fence.setNote("- [ ] one", in: tab)
         store.add(fence)
         store.useDisplayLayout("A", screens: [screen])
         store.useDisplayLayout("B", screens: [screen])
         store.update(fence.id) {
             $0.frame.origin.x = 600
-            $0.note = "- [x] one\ntwo"
+            $0.setNote("- [x] one\ntwo", in: tab)
         }
         store.useDisplayLayout("A", screens: [screen])
         XCTAssertEqual(store.fence(fence.id)?.frame.minX, 100, "layout A's position")
-        XCTAssertEqual(store.fence(fence.id)?.note, "- [x] one\ntwo", "the note is the same in every layout")
+        XCTAssertEqual(store.fence(fence.id)?.note(in: tab), "- [x] one\ntwo", "the note is the same in every layout")
         store.saveNow()
 
         let loaded = FenceStore(fileURL: url).fence(fence.id)
         XCTAssertEqual(loaded?.style, .stickyNote)
         XCTAssertEqual(loaded?.paper, .blue)
-        XCTAssertEqual(loaded?.note, "- [x] one\ntwo")
+        XCTAssertEqual(loaded?.note(in: tab), "- [x] one\ntwo")
     }
 }

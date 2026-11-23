@@ -20,20 +20,22 @@ struct SearchResult: Identifiable {
     var noteMatch: NoteMatch?
 
     var id: String {
-        if let noteMatch { return section.rawValue + noteMatch.fenceID.uuidString + ":\(noteMatch.line)" }
+        if let noteMatch { return section.rawValue + noteMatch.fenceID.uuidString + noteMatch.tabID.uuidString + ":\(noteMatch.line)" }
         return section.rawValue + (itemID?.uuidString ?? url?.path ?? name)
     }
     var isFile: Bool { itemID == nil && noteMatch == nil }
 }
 
-/// Where search text was found in a sticky note: the fence, which line, and the text to select.
+/// Where search text was found in a sticky note: the fence and tab, which line, and the
+/// text to select.
 struct NoteMatch {
     let fenceID: UUID
+    let tabID: UUID
     let line: Int
     let range: NSRange
 
     /// One match per line of the note that contains `query`, ignoring checklist markers.
-    static func find(_ query: String, in note: String, fenceID: UUID) -> [(match: NoteMatch, text: String)] {
+    static func find(_ query: String, in note: String, fenceID: UUID, tabID: UUID) -> [(match: NoteMatch, text: String)] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return [] }
         let text = note as NSString
@@ -43,7 +45,24 @@ struct NoteMatch {
             let found = text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive], range: content)
             guard found.location != NSNotFound else { return nil }
             let shown = text.substring(with: content).trimmingCharacters(in: .whitespaces)
-            return (NoteMatch(fenceID: fenceID, line: index, range: found), shown)
+            return (NoteMatch(fenceID: fenceID, tabID: tabID, line: index, range: found), shown)
+        }
+    }
+}
+
+extension SearchResult {
+    /// A result for each line of each of a sticky note's tabs that contains `query`.
+    static func noteResults(_ query: String, in fence: Fence) -> [SearchResult] {
+        guard fence.isStickyNote else { return [] }
+        return fence.tabs.flatMap { tab in
+            let icon = StickyNoteIcon.image(paper: fence.paper(for: tab))
+            return NoteMatch.find(query, in: tab.note ?? "", fenceID: fence.id, tabID: tab.id).map { match, line in
+                SearchResult(
+                    section: .fences, url: nil, name: String(line.prefix(200)),
+                    subtitle: "Sticky note \u{00B7} \u{201C}\(fence.title)\u{201D} \u{203A} \(tab.name)",
+                    icon: icon, noteMatch: match
+                )
+            }
         }
     }
 }
@@ -123,14 +142,7 @@ final class SearchService: ObservableObject {
         var fencedPaths: Set<String> = []
         for fence in store.fences {
             if fence.isStickyNote {
-                let icon = StickyNoteIcon.image(paper: fence.paper)
-                for (match, line) in NoteMatch.find(text, in: fence.note, fenceID: fence.id) {
-                    fenceResults.append(SearchResult(
-                        section: .fences, url: nil, name: String(line.prefix(200)),
-                        subtitle: "Sticky note \u{00B7} \u{201C}\(fence.title)\u{201D}",
-                        icon: icon, noteMatch: match
-                    ))
-                }
+                fenceResults += SearchResult.noteResults(text, in: fence)
                 continue
             }
             for item in fence.items {

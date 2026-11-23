@@ -34,9 +34,7 @@ struct FenceView: View {
             VStack(spacing: 0) {
                 titleBar(fence, style: style, metrics: metrics, animate: animate)
                 if !fence.isCollapsed {
-                    if fence.holdsItems {
-                        tabBar(fence, style: style, metrics: metrics)
-                    }
+                    tabBar(fence, style: style, metrics: metrics)
                     GeometryReader { geo in
                         let art = cornerArt(fence, style: style, area: geo.size, metrics: metrics)
                         ZStack(alignment: .bottomTrailing) {
@@ -45,8 +43,10 @@ struct FenceView: View {
                                 // Stops above the corner art, like the grid, so no text sits behind it.
                                 StickyNoteView(
                                     fenceID: fenceID,
-                                    note: fence.note,
-                                    look: StickyNoteLook(style: style, paper: fence.paper, textScale: fence.textScale),
+                                    tabID: tab.id,
+                                    tabIDs: fence.tabs.map(\.id),
+                                    note: tab.note ?? "",
+                                    look: StickyNoteLook(style: style, paper: fence.currentPaper, textScale: fence.textScale),
                                     bottomInset: art == nil ? Self.pillClearance : 0,
                                     fences: coordinator
                                 )
@@ -302,9 +302,12 @@ struct FenceView: View {
                     HStack(alignment: .top, spacing: 4) {
                         tabList(fence, style: style, metrics: metrics)
                             .onPreferenceChange(TabFramesKey.self) { coordinator.tabFrames[fenceID] = $0 }
-                        sortButton(fence, style: style, metrics: metrics)
-                            .frame(height: metrics.tabBarHeight)
-                            .padding(.trailing, 6)
+                        // A note has nothing to sort.
+                        if fence.holdsItems {
+                            sortButton(fence, style: style, metrics: metrics)
+                                .frame(height: metrics.tabBarHeight)
+                                .padding(.trailing, 6)
+                        }
                     }
                     .frame(maxHeight: .infinity, alignment: .top)
                     TabStripGrip(fenceID: fenceID, rows: fence.tabRows, metrics: metrics, style: style)
@@ -451,12 +454,17 @@ struct FenceView: View {
                         if !focused { commitTabRename() }
                     }
             } else {
-                Text(tab.name)
-                    .font(.system(size: metrics.font(12), weight: selected ? .semibold : .regular))
-                    .foregroundStyle(selected ? style.tabSelectedText : style.tabText)
-                    .shadow(color: style.textShadow, radius: 1.5, y: 1)
-                    .lineLimit(1)
-                    .fixedSize()
+                HStack(spacing: metrics.font(4)) {
+                    if fence.isStickyNote {
+                        paperDot(fence, tab, style: style, metrics: metrics)
+                    }
+                    Text(tab.name)
+                        .font(.system(size: metrics.font(12), weight: selected ? .semibold : .regular))
+                        .foregroundStyle(selected ? style.tabSelectedText : style.tabText)
+                        .shadow(color: style.textShadow, radius: 1.5, y: 1)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
             }
         }
         .padding(.horizontal, metrics.font(9))
@@ -476,8 +484,45 @@ struct FenceView: View {
         .simultaneousGesture(TapGesture().onEnded { coordinator.selectTab(fenceID, tab.id) })
         .contextMenu {
             Button("Rename…") { startTabRename(tab.id, name: tab.name) }
-            Button("Delete Tab", role: .destructive) { coordinator.deleteTab(fenceID, tab.id) }
+            if fence.isStickyNote {
+                tabPaperMenu(fence, tab)
+            }
+            Button("Delete Tab", role: .destructive) { coordinator.confirmDeleteTab(fenceID, tab.id) }
                 .disabled(fence.tabs.count <= 1)
+        }
+    }
+
+    /// A sticky note tab's paper, which shows on its chip even while another tab is shown.
+    private func paperDot(_ fence: Fence, _ tab: FenceTab, style: ThemeStyle, metrics: FenceMetrics) -> some View {
+        let fill = fence.paper(for: tab).map { $0.title[1] } ?? ThemeStyle.of(fence.theme ?? themes.globalTheme, for: fence).solidBody
+        return Circle()
+            .fill(fill)
+            .overlay(Circle().strokeBorder(style.tabSelectedText.opacity(0.45), lineWidth: 0.75))
+            .frame(width: metrics.font(8), height: metrics.font(8))
+    }
+
+    private func tabPaperMenu(_ fence: Fence, _ tab: FenceTab) -> some View {
+        Menu("Paper") {
+            Button {
+                coordinator.setTabPaper(fenceID, tab.id, nil)
+            } label: {
+                let title = "Same as Fence (\(fence.paper?.name ?? "Theme"))"
+                if tab.paper == nil { Label(title, systemImage: "checkmark") } else { Text(title) }
+            }
+            Divider()
+            ForEach(PaperColor.allCases) { paper in
+                Button {
+                    coordinator.setTabPaper(fenceID, tab.id, .color(paper))
+                } label: {
+                    if tab.paper == .color(paper) { Label(paper.name, systemImage: "checkmark") } else { Text(paper.name) }
+                }
+            }
+            Divider()
+            Button {
+                coordinator.setTabPaper(fenceID, tab.id, .theme)
+            } label: {
+                if tab.paper == .theme { Label("Use Theme", systemImage: "checkmark") } else { Text("Use Theme") }
+            }
         }
     }
 
@@ -509,7 +554,7 @@ struct FenceView: View {
     /// A sticky note on paper has none, and its note keeps room for a few lines above it.
     private func cornerArt(_ fence: Fence, style: ThemeStyle, area: CGSize, metrics: FenceMetrics) -> CornerArtLayout? {
         if fence.isStickyNote {
-            guard fence.paper == nil else { return nil }
+            guard fence.currentPaper == nil else { return nil }
             let lines = StickyNoteLook(style: style, paper: nil, textScale: fence.textScale).lineHeight * 3
             return CornerArtLayout.make(fence: fence, style: style, area: area, minimumGrid: max(metrics.minimumGridHeight, lines))
         }
@@ -568,7 +613,7 @@ struct FenceMenu: View {
     var body: some View {
         // Color and transparency belong to Classic; other themes set their own. A sticky note
         // on paper uses neither.
-        let usesTheme = fence.holdsItems || fence.paper == nil
+        let usesTheme = fence.currentPaper == nil
         let isClassic = usesTheme && (fence.theme ?? themes.globalTheme) == .classic
         if fence.holdsItems {
             Menu("Add") {
@@ -584,8 +629,8 @@ struct FenceMenu: View {
         Divider()
         Button("Rename…", action: onRename)
         Button("Title Style…", action: onTitleStyle)
+        Button("New Tab", action: onNewTab)
         if fence.holdsItems {
-            Button("New Tab", action: onNewTab)
             Menu("Sort \u{201C}\(fence.currentTab.name)\u{201D}") {
                 SortMenuContent(fenceID: fence.id, tab: fence.currentTab)
             }
@@ -666,12 +711,10 @@ struct FenceMenu: View {
             Button("Reset to 100%") { coordinator.setTextScale(fence.id, 1) }
                 .disabled(fence.textScale == 1)
         }
-        if fence.holdsItems {
-            Button(fence.tabsCollapsed ? "Show Tabs" : "Tuck Tabs Away") {
-                coordinator.setTabStrip(fence.id, rows: fence.tabRows, collapsed: !fence.tabsCollapsed)
-            }
-            .disabled(fence.isCollapsed)
+        Button(fence.tabsCollapsed ? "Show Tabs" : "Tuck Tabs Away") {
+            coordinator.setTabStrip(fence.id, rows: fence.tabRows, collapsed: !fence.tabsCollapsed)
         }
+        .disabled(fence.isCollapsed)
         Button(fence.isCollapsed ? "Expand" : "Collapse") { coordinator.toggleCollapse(fence.id) }
         Menu("Show On") {
             ForEach(FenceSpaces.allCases) { spaces in
