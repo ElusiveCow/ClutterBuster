@@ -12,7 +12,7 @@ struct ToolbarActions {
 
 /// The toolbar's buttons besides search, the same in every shape.
 enum ToolbarItem: CaseIterable {
-    case newFence, collapseAll, expandAll, toggleFences, settings
+    case newFence, collapseAll, expandAll, toggleFences, snap, settings
 }
 
 /// What the toolbar shows. The window controller changes it and sizes the window to match.
@@ -412,6 +412,7 @@ private struct ToolbarView: View {
     let events: ToolbarEvents
 
     @ObservedObject private var themes = ThemeSettings.shared
+    @ObservedObject private var snapping = SnapSettings.shared
 
     var body: some View {
         let style = ThemeStyle.chrome(themes.globalTheme)
@@ -569,6 +570,14 @@ private struct ToolbarView: View {
                 style: style,
                 action: actions.toggleFences
             )
+        case .snap:
+            ToolbarButton(
+                icon: .magnet,
+                help: snapping.enabled ? "Snapping is on: fences line up as you drag them. Click to turn it off." : "Snapping is off. Click to turn it on.",
+                round: round,
+                active: snapping.enabled,
+                style: style
+            ) { snapping.enabled.toggle() }
         case .settings:
             ToolbarButton(systemImage: "gearshape", help: "Settings", round: round, style: style, action: actions.openSettings)
         }
@@ -624,8 +633,14 @@ private struct ShapeBorder<S: Shape>: View {
     }
 }
 
+/// A button's glyph: an SF Symbol, or one drawn here where SF Symbols has none.
+private enum ToolbarIcon {
+    case symbol(String)
+    case magnet
+}
+
 private struct ToolbarButton: View {
-    let systemImage: String
+    let icon: ToolbarIcon
     var title: String?
     var help: String?
     /// A circle, for the column and the quarter circle.
@@ -635,10 +650,37 @@ private struct ToolbarButton: View {
     let style: ThemeStyle
     let action: () -> Void
 
+    init(
+        systemImage: String, title: String? = nil, help: String? = nil, round: Bool = false, active: Bool = false,
+        style: ThemeStyle, action: @escaping () -> Void
+    ) {
+        self.init(icon: .symbol(systemImage), title: title, help: help, round: round, active: active, style: style, action: action)
+    }
+
+    init(
+        icon: ToolbarIcon, title: String? = nil, help: String? = nil, round: Bool = false, active: Bool = false,
+        style: ThemeStyle, action: @escaping () -> Void
+    ) {
+        self.icon = icon
+        self.title = title
+        self.help = help
+        self.round = round
+        self.active = active
+        self.style = style
+        self.action = action
+    }
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
-                Image(systemName: systemImage)
+                switch icon {
+                case .symbol(let name):
+                    Image(systemName: name)
+                case .magnet:
+                    MagnetShape()
+                        .stroke(style.titleText, style: StrokeStyle(lineWidth: 2.6))
+                        .frame(width: 12, height: 13)
+                }
                 if let title { Text(title).lineLimit(1).fixedSize() }
             }
             .font(.system(size: 12, weight: .medium))
@@ -650,5 +692,27 @@ private struct ToolbarButton: View {
         }
         .buttonStyle(.plain)
         .help(help ?? title ?? "")
+    }
+}
+
+/// A horseshoe magnet opening upward, with its two pole tips set apart from the bend.
+/// Meant to be stroked.
+private struct MagnetShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let inset: CGFloat = 1.3
+        let rect = rect.insetBy(dx: inset, dy: inset)
+        let radius = rect.width / 2
+        let tip = rect.height * 0.28
+        let gap: CGFloat = 1.6
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY + tip + gap))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - radius))
+        path.addArc(center: CGPoint(x: rect.midX, y: rect.maxY - radius), radius: radius, startAngle: .degrees(180), endAngle: .degrees(0), clockwise: true)
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + tip + gap))
+        for x in [rect.minX, rect.maxX] {
+            path.move(to: CGPoint(x: x, y: rect.minY))
+            path.addLine(to: CGPoint(x: x, y: rect.minY + tip))
+        }
+        return path
     }
 }
