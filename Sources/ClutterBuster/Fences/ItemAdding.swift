@@ -309,7 +309,7 @@ extension FenceCoordinator {
         editor.save()
         if editor.isNew, editor.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             Log.write("note: closed empty, so removed it")
-            removeItem(editor.itemID, from: editor.fenceID)
+            removeItem(editor.itemID, from: editor.fenceID, undoable: false)
         } else {
             Log.write("note: closed")
         }

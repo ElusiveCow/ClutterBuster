@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemValidation {
     private let store = FenceStore()
     private let desktop = DesktopIconService()
     private lazy var coordinator = FenceCoordinator(store: store, desktop: desktop)
@@ -10,6 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var search: SearchController?
     private var statusItem: NSStatusItem?
     private var fencesMenuItem: NSMenuItem?
+    private var undoMenuItem: NSMenuItem?
+    private lazy var undoToast = UndoToastController(history: coordinator.undoHistory)
     private var settingsWindow: NSWindow?
     private var shownAccessAlert = false
     private var sigterm: DispatchSourceSignal?
@@ -19,6 +21,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.write("launched with \(store.fences.count) fences")
+        // Left over if the last run didn't quit cleanly; nothing can undo those deletes now.
+        CustomCornerArt.emptyUndoTrash("left over from the last run")
         LoginItem.shared.registerAtLaunch()
         desktop.onAccessDenied = { [weak self] in self?.showAccessAlert() }
         coordinator.start()
@@ -47,10 +51,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ))
         toolbar.show()
         self.toolbar = toolbar
+        toolbar.window.onUndo = { [weak self] in self?.coordinator.undoLast() ?? false }
         coordinator.toolbarFrame = { [weak toolbar] in
             guard let toolbar, toolbar.isVisible else { return nil }
             return toolbar.window.frame
         }
+        undoToast.placement = { [weak toolbar] in toolbar?.placement }
+        coordinator.onUndoRecorded = { [weak self] entry in self?.undoToast.show(entry) }
         coordinator.onDisplayLayoutChanged = { [weak toolbar] in toolbar?.applyStoredPlacement() }
         buildStatusItem()
 
@@ -92,6 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         newFilePrompt.leave(reason: "Clutter Buster quit")
         coordinator.saveStickyNotes()
         coordinator.restoreAllToDesktop()
+        undoToast.hide()
+        coordinator.forgetUndoHistory()
         store.saveNow()
         return .terminateNow
     }
@@ -133,6 +142,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "Clutter Buster")
         let menu = NSMenu()
+        let undoItem = menu.addItem(withTitle: "Undo", action: #selector(undoFromMenu), keyEquivalent: "z")
+        undoItem.target = self
+        undoMenuItem = undoItem
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Search…", action: #selector(openSearch), keyEquivalent: "f").target = self
         menu.addItem(withTitle: "New Fence", action: #selector(newFence), keyEquivalent: "n").target = self
         menu.addItem(withTitle: "New Sticky Note", action: #selector(newStickyNote), keyEquivalent: "").target = self
@@ -150,6 +163,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         fencesMenuItem?.title = coordinator.fencesHidden ? "Show Fences" : "Hide Fences"
+        undoMenuItem?.title = coordinator.undoHistory.menuTitle
+    }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        item === undoMenuItem ? coordinator.undoHistory.last != nil : true
+    }
+
+    @objc private func undoFromMenu() {
+        coordinator.undoLast()
     }
 
     @objc private func openSearch() {

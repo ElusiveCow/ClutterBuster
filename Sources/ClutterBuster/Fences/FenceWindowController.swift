@@ -33,6 +33,9 @@ final class DesktopLevelWindow: NSWindow {
     var onMouseDown: (() -> Void)?
     /// Called for Command-V while no text is being edited. Returns false if nothing was pasted.
     var onPaste: (() -> Bool)?
+    /// Called for Command-Z while no text is being edited, which undoes its own typing
+    /// instead. Returns false if there was nothing to undo.
+    var onUndo: (() -> Bool)?
 
     override func sendEvent(_ event: NSEvent) {
         switch event.type {
@@ -46,6 +49,10 @@ final class DesktopLevelWindow: NSWindow {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
         if modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "v", !(firstResponder is NSText) {
             if onPaste?() != true { NSSound.beep() }
+            return true
+        }
+        if modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "z", !(firstResponder is NSText), let onUndo {
+            if !onUndo() { NSSound.beep() }
             return true
         }
         return super.performKeyEquivalent(with: event)
@@ -78,6 +85,7 @@ final class FenceWindowController {
         window.contentView = FirstMouseHostingView(rootView: root)
         window.onMouseDown = { [weak coordinator] in coordinator?.raise(fenceID) }
         window.onPaste = { [weak coordinator] in coordinator?.paste(into: fenceID) ?? false }
+        window.onUndo = { [weak coordinator] in coordinator?.undoLast() ?? false }
     }
 
     func close() {

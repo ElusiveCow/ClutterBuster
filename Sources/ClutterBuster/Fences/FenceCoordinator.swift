@@ -74,6 +74,10 @@ final class FenceCoordinator: ObservableObject {
     /// Waits for the displays to settle after they change.
     private var displayWork: DispatchWorkItem?
     private var spacesObserver: AnyCancellable?
+    /// Fence actions that can be undone, newest last.
+    let undoHistory = UndoHistory()
+    /// Called after an action is recorded, for its toast.
+    var onUndoRecorded: (UndoHistory.Entry) -> Void = { _ in }
 
     init(store: FenceStore, desktop: DesktopIconService) {
         self.store = store
@@ -216,8 +220,12 @@ final class FenceCoordinator: ObservableObject {
         }
     }
 
+    /// Deletes a fence, keeping all of it, and its corner picture, for Undo.
     func deleteFence(_ id: UUID) {
-        guard let fence = store.fence(id) else { return }
+        // Typing not saved yet comes back with an undo too.
+        if store.fence(id)?.isStickyNote == true { stickyTextView(id)?.saveNow() }
+        guard let fence = store.fence(id), let index = store.fences.firstIndex(where: { $0.id == id }) else { return }
+        let savedFrames = store.savedFrames(of: id)
         Log.write("deleted fence \"\(fence.title)\" (\(id)) with \(fence.items.count) item(s)")
         if setup?.fenceID == id { setup?.finish() }
         if raisedFenceID == id { lowerRaisedFence() }
@@ -230,7 +238,12 @@ final class FenceCoordinator: ObservableObject {
         tabStripFrames[id] = nil
         tileFrames[id] = nil
         store.remove(id)
-        CustomCornerArt.delete(for: id)
+        let keptPicture = CustomCornerArt.moveToUndoTrash(for: id)
+        recordUndo(
+            "Delete \(Self.quoted(fence.title))",
+            toast: .init(symbol: "trash", message: "Deleted fence \(Self.quoted(fence.title))"),
+            discard: { if keptPicture { CustomCornerArt.deleteFromUndoTrash(for: id) } }
+        ) { $0.restoreFence(fence, at: index, savedFrames: savedFrames, picture: keptPicture) }
     }
 
     func rename(_ id: UUID, to title: String) {
@@ -625,15 +638,15 @@ final class FenceCoordinator: ObservableObject {
 
     /// Removes a tab and moves its items into the first remaining tab. The last tab stays.
     func deleteTab(_ id: UUID, _ tabID: UUID) {
-        store.update(id) { fence in
-            guard fence.tabs.count > 1 else { return }
-            fence.tabs.removeAll { $0.id == tabID }
-            let destination = fence.tabs[0].id
-            for index in fence.items.indices where fence.items[index].tabID == tabID {
-                fence.items[index].tabID = destination
-            }
-            if fence.selectedTabID == tabID { fence.selectedTabID = destination }
-        }
+        guard let fence = store.fence(id), fence.tabs.count > 1 else { return }
+        if fence.isStickyNote, fence.currentTab.id == tabID { stickyTextView(id)?.saveNow() }
+        var removed: RemovedTab?
+        store.update(id) { removed = $0.removeTab(tabID) }
+        guard let removed else { return }
+        recordUndo(
+            "Delete Tab \(Self.quoted(removed.tab.name))",
+            toast: .init(symbol: "trash", message: "Deleted tab \(Self.quoted(removed.tab.name))")
+        ) { $0.restoreTab(removed, in: id) }
     }
 
     func setSort(_ id: UUID, _ tabID: UUID, _ sort: TabSort) {
@@ -677,12 +690,22 @@ final class FenceCoordinator: ObservableObject {
         }
     }
 
-    func removeItem(_ itemID: UUID, from id: UUID) {
-        guard let fence = store.fence(id), let item = fence.items.first(where: { $0.id == itemID }) else { return }
+    /// Remove from Fence. A file goes back on the Desktop; a link, note or Shortcut is
+    /// deleted. Without `undoable`, as for a new note closed empty, it can't be undone.
+    func removeItem(_ itemID: UUID, from id: UUID, undoable: Bool = true) {
+        guard let fence = store.fence(id), let index = fence.items.firstIndex(where: { $0.id == itemID }) else { return }
         if noteEditor?.itemID == itemID { closeNoteEditor() }
+        // Closing the editor saves the note's text into the fence.
+        let item = store.fence(id)?.items.first { $0.id == itemID } ?? fence.items[index]
         store.update(id) { $0.items.removeAll { $0.id == itemID } }
         Log.write("removed \"\(item.finderName)\" from \"\(fence.title)\"")
         unhide([item])
+        guard undoable else { return }
+        let name = Self.quoted(item.isFile ? item.finderName : item.displayName)
+        let toast: UndoHistory.Toast = item.isFile
+            ? .init(symbol: "tray.and.arrow.up", message: "Removed \(name) from \(Self.quoted(fence.title))")
+            : .init(symbol: "trash", message: "Deleted \(item.kind == .shortcut ? "Shortcut" : (item.kindName ?? "item").lowercased()) \(name)")
+        recordUndo("\(item.isFile ? "Remove" : "Delete") \(name)", toast: toast) { $0.putBack(item, at: index, into: id) }
     }
 
     /// Called when an item tile is dropped at `point` (Cocoa screen coordinates). Over another
@@ -694,18 +717,21 @@ final class FenceCoordinator: ObservableObject {
             return
         }
         guard let source = store.fence(sourceID),
-              let item = source.items.first(where: { $0.id == itemID }) else {
+              let index = source.items.firstIndex(where: { $0.id == itemID }) else {
             Log.write("drag end: item \(itemID) no longer in fence \(sourceID)")
             return
         }
+        let item = source.items[index]
         let name = item.finderName
         Log.write("drag end: \"\(name)\" from \"\(source.title)\" at \(point) operation=\(operation.rawValue)")
+        let undoName = Self.quoted(item.isFile ? name : item.displayName)
 
         if displayFrame(for: source).contains(point) {
             if let tab = tab(at: point, in: source) {
                 if tab.id != item.tabID {
                     Log.write("  decision: move to tab \"\(tab.name)\"")
                     moveItem(itemID, in: sourceID, toTab: tab.id)
+                    recordUndo("Move \(undoName)") { $0.putBack(item, at: index, into: sourceID) }
                 } else {
                     Log.write("  decision: dropped on its own tab, no change")
                 }
@@ -730,6 +756,7 @@ final class FenceCoordinator: ObservableObject {
             } else {
                 moveNonFileItem(item, from: sourceID, to: target.id, tab: tab?.id)
             }
+            recordUndo("Move \(undoName)") { $0.putBack(item, at: index, into: sourceID) }
             return
         }
 
@@ -749,6 +776,7 @@ final class FenceCoordinator: ObservableObject {
         }
 
         store.update(sourceID) { $0.items.removeAll { $0.id == itemID } }
+        recordUndo("Remove \(undoName)") { $0.putBack(item, at: index, into: sourceID) }
         guard item.isOnDesktop else {
             Log.write("  decision: removed from fence (not a Desktop file, nothing placed)")
             return
@@ -764,6 +792,111 @@ final class FenceCoordinator: ObservableObject {
                     Log.write("  result: Finder reports \"\(name)\" at \(positions?[name].map { "\($0)" } ?? "unknown")")
                 }
             }
+        }
+    }
+
+    // MARK: Undo
+
+    static func quoted(_ text: String) -> String { "\u{201C}\(text)\u{201D}" }
+
+    /// Adds an action to the undo history and shows its toast.
+    private func recordUndo(
+        _ name: String, toast: UndoHistory.Toast? = nil, discard: @escaping () -> Void = {},
+        undo: @escaping (FenceCoordinator) -> Void
+    ) {
+        let entry = undoHistory.record(name, toast: toast, undo: { [weak self] in
+            guard let self else { return }
+            Log.write("undo: \(name)")
+            undo(self)
+        }, discard: discard)
+        guard let entry else { return }
+        Log.write("undo: can undo \(name) (\(undoHistory.entries.count) in the history)")
+        onUndoRecorded(entry)
+    }
+
+    /// Undoes the newest fence action, for Command-Z and the menu bar. False with nothing
+    /// to undo.
+    @discardableResult
+    func undoLast() -> Bool {
+        guard undoHistory.last != nil else {
+            Log.write("undo: nothing to undo")
+            return false
+        }
+        return undoHistory.undoLast() != nil
+    }
+
+    /// Forgets every action, deleting the corner pictures kept for them. Called on quit.
+    func forgetUndoHistory() {
+        undoHistory.removeAll()
+        CustomCornerArt.emptyUndoTrash("Clutter Buster quit")
+    }
+
+    /// Puts a deleted fence back as it was, in its old place in the fence list, with its
+    /// frames for other displays and its corner picture. Its Desktop files are hidden again
+    /// where they are, keeping the original positions they go back to.
+    private func restoreFence(_ deleted: Fence, at index: Int, savedFrames: [String: CGRect], picture: Bool) {
+        guard store.fence(deleted.id) == nil else {
+            Log.write("  \"\(deleted.title)\" is already back")
+            return
+        }
+        var fence = deleted
+        fence.items = restorable(deleted.items)
+        takeOutOfFences(fence.items)
+        if picture { CustomCornerArt.restoreFromUndoTrash(for: fence.id) }
+        store.insert(fence, at: index, savedFrames: savedFrames)
+        clampToScreens(fence.id)
+        if let fence = store.fence(fence.id) { openWindow(for: fence) }
+        hide(fence.items)
+        Log.write("  put \"\(fence.title)\" back as fence \(min(index, store.fences.count - 1) + 1) of \(store.fences.count), with \(fence.items.count) item(s)")
+    }
+
+    private func restoreTab(_ removed: RemovedTab, in id: UUID) {
+        guard let fence = store.fence(id) else {
+            Log.write("  its fence is gone")
+            return
+        }
+        if fence.isStickyNote { stickyTextView(id)?.saveNow() }
+        var restored = false
+        store.update(id) { restored = $0.restoreTab(removed) }
+        Log.write(restored
+            ? "  put tab \"\(removed.tab.name)\" back in \"\(fence.title)\" with \(removed.itemIDs.count) item(s)"
+            : "  \"\(fence.title)\" has tab \"\(removed.tab.name)\" already")
+    }
+
+    /// Puts an item back at its old place in a fence's manual order and in its old tab,
+    /// taking it out of wherever it is now, and hides its Desktop file again.
+    private func putBack(_ item: FenceItem, at index: Int, into id: UUID) {
+        guard let fence = store.fence(id) else {
+            Log.write("  \"\(item.finderName)\" had nowhere to go back to: its fence is gone")
+            return
+        }
+        guard let item = restorable([item]).first else { return }
+        takeOutOfFences([item])
+        store.update(id) { $0.insertItem(item, at: index) }
+        hide([item])
+        Log.write("  put \"\(item.finderName)\" back in \"\(fence.title)\"")
+    }
+
+    /// The items that can go back in a fence: links, notes and Shortcuts, and files that
+    /// are still there. The others are logged and left out.
+    private func restorable(_ items: [FenceItem]) -> [FenceItem] {
+        items.filter { item in
+            guard item.isFile, !FileManager.default.fileExists(atPath: item.path) else { return true }
+            Log.write("  skipped \"\(item.finderName)\": it's no longer at \(item.path)")
+            return false
+        }
+    }
+
+    /// Takes items about to go back into a fence out of the fences holding them now: the
+    /// same item, or another for the same file.
+    private func takeOutOfFences(_ items: [FenceItem]) {
+        let ids = Set(items.map(\.id))
+        let paths = Set(items.filter(\.isFile).map(\.path))
+        func matches(_ item: FenceItem) -> Bool { ids.contains(item.id) || (item.isFile && paths.contains(item.path)) }
+        for fence in store.fences where fence.items.contains(where: matches) {
+            if noteEditor.map({ ids.contains($0.itemID) }) == true { closeNoteEditor() }
+            store.update(fence.id) { $0.items.removeAll(where: matches) }
+            Log.write("  took \(fence.items.filter(matches).map { "\"\($0.finderName)\"" }.joined(separator: ", ")) out of \"\(fence.title)\"")
         }
     }
 
