@@ -87,6 +87,22 @@ final class FenceStore: ObservableObject {
         scheduleSave()
     }
 
+    /// Where each saved display layout has the fence, by layout key.
+    func savedFrames(of id: UUID) -> [String: CGRect] {
+        displayLayouts.compactMapValues { $0.frames[id.uuidString] }
+    }
+
+    /// Puts a removed fence back at `index` in the list, and its frames back in the display
+    /// layouts that are still kept. Does nothing if a fence with its ID is here already.
+    func insert(_ fence: Fence, at index: Int, savedFrames: [String: CGRect] = [:]) {
+        guard self.fence(fence.id) == nil else { return }
+        fences.insert(fence, at: min(max(index, 0), fences.count))
+        for (key, frame) in savedFrames where displayLayouts[key] != nil {
+            displayLayouts[key]?.frames[fence.id.uuidString] = frame
+        }
+        scheduleSave()
+    }
+
     func update(_ id: UUID, _ mutate: (inout Fence) -> Void) {
         guard let index = fences.firstIndex(where: { $0.id == id }) else { return }
         mutate(&fences[index])

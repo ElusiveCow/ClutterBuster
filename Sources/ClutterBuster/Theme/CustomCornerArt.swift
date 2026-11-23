@@ -43,6 +43,66 @@ enum CustomCornerArt {
         }
     }
 
+    // MARK: Undo trash
+
+    /// Where a deleted fence's picture waits while the delete can still be undone.
+    static let undoTrash = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("ClutterBuster/UndoTrash", isDirectory: true)
+
+    /// Moves the fence's picture into the undo trash. False if it has none.
+    @discardableResult
+    static func moveToUndoTrash(for fenceID: UUID) -> Bool {
+        let name = fileName(for: fenceID)
+        cache.removeObject(forKey: name as NSString)
+        guard FileManager.default.fileExists(atPath: url(name).path) else { return false }
+        let trashed = undoTrash.appendingPathComponent(name)
+        do {
+            try FileManager.default.createDirectory(at: undoTrash, withIntermediateDirectories: true)
+            try? FileManager.default.removeItem(at: trashed)
+            try FileManager.default.moveItem(at: url(name), to: trashed)
+            Log.write("moved the corner picture of fence \(fenceID) to the undo trash")
+            return true
+        } catch {
+            Log.write("couldn't move the corner picture of fence \(fenceID) to the undo trash, so deleted it: \(error.localizedDescription)")
+            delete(for: fenceID)
+            return false
+        }
+    }
+
+    /// Puts the fence's picture back from the undo trash.
+    static func restoreFromUndoTrash(for fenceID: UUID) {
+        let name = fileName(for: fenceID)
+        let trashed = undoTrash.appendingPathComponent(name)
+        guard FileManager.default.fileExists(atPath: trashed.path) else {
+            Log.write("  the corner picture of fence \(fenceID) isn't in the undo trash any more")
+            return
+        }
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try? FileManager.default.removeItem(at: url(name))
+            try FileManager.default.moveItem(at: trashed, to: url(name))
+            cache.removeObject(forKey: name as NSString)
+            Log.write("  put the corner picture of fence \(fenceID) back")
+        } catch {
+            Log.write("  couldn't put the corner picture of fence \(fenceID) back: \(error.localizedDescription)")
+        }
+    }
+
+    static func deleteFromUndoTrash(for fenceID: UUID) {
+        let trashed = undoTrash.appendingPathComponent(fileName(for: fenceID))
+        guard FileManager.default.fileExists(atPath: trashed.path) else { return }
+        try? FileManager.default.removeItem(at: trashed)
+        Log.write("deleted the corner picture of fence \(fenceID) from the undo trash")
+    }
+
+    /// Deletes everything in the undo trash, as on quit and at launch.
+    static func emptyUndoTrash(_ reason: String) {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: undoTrash.path)) ?? []
+        guard !names.isEmpty else { return }
+        for name in names { try? FileManager.default.removeItem(at: undoTrash.appendingPathComponent(name)) }
+        Log.write("emptied the undo trash (\(names.count) picture(s)), \(reason)")
+    }
+
     enum Failure: LocalizedError {
         case unreadable, unwritable
 
