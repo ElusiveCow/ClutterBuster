@@ -17,10 +17,22 @@ enum FolderDrop {
     /// Why `source` can't go into `folder`, or nil if it can. Finder refuses to put a folder
     /// into itself or one of its own subfolders, for a copy as well as a move.
     static func problem(putting source: URL, into folder: URL) -> String? {
+        if isInstalledApp(source) {
+            return "\u{201C}\(source.deletingPathExtension().lastPathComponent)\u{201D} is an installed app, so Clutter Buster leaves it in its Applications folder."
+        }
         let from = source.standardizedFileURL.resolvingSymlinksInPath().path
         let to = folder.standardizedFileURL.resolvingSymlinksInPath().path
         guard to == from || to.hasPrefix(from + "/") else { return nil }
         return "\u{201C}\(source.lastPathComponent)\u{201D} can't go into itself or one of its own folders."
+    }
+
+    /// An app in /Applications, /System/Applications or ~/Applications, or a folder below them.
+    /// Fences only point at these; they're never moved or copied into folders.
+    static func isInstalledApp(_ url: URL) -> Bool {
+        let path = url.standardizedFileURL.path
+        guard url.pathExtension.lowercased() == "app" else { return false }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return ["/Applications/", "/System/Applications/", home + "/Applications/"].contains { path.hasPrefix($0) }
     }
 
     /// Finder copies rather than moves between volumes unless told otherwise.

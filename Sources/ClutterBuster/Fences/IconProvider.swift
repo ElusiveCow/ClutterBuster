@@ -16,9 +16,18 @@ final class IconProvider {
 
     func plainIcon(for path: String) -> NSImage {
         if let icon = plainIcons[path] { return icon }
-        let icon = NSWorkspace.shared.icon(forFile: path)
+        let icon = NSWorkspace.shared.icon(forFile: Self.iconPath(for: path))
         plainIcons[path] = icon
         return icon
+    }
+
+    /// Some apps in /Applications, such as Safari, are links into a system volume. Finder
+    /// shows them with the app's own icon, not an alias arrow, so fences do too.
+    private static func iconPath(for path: String) -> String {
+        let url = URL(fileURLWithPath: path)
+        guard FolderDrop.isInstalledApp(url),
+              (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true else { return path }
+        return url.resolvingSymlinksInPath().path
     }
 
     /// The best icon available right now, without waiting for a thumbnail.
@@ -60,8 +69,8 @@ final class IconProvider {
     }
 
     private static func wantsPreview(path: String) -> Bool {
-        guard finderShowsIconPreviews else { return false }
         let url = URL(fileURLWithPath: path)
+        guard finderShowsIconPreviews, !FolderDrop.isInstalledApp(url) else { return false }
         let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .customIconKey])
         // Finder shows folders, apps and custom-icon files with their regular icon.
         return values?.isDirectory == false && values?.customIcon == nil
