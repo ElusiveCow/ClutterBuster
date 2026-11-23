@@ -52,6 +52,19 @@ final class FenceCoordinator: ObservableObject {
         },
         onOutsideClick: { [weak self] in self?.lowerRaisedFence() }
     )
+    /// The level of a fence above app windows: one clicked, or all of them during a peek.
+    static let raisedLevel: NSWindow.Level = .floating
+    var toolbarWindow: () -> NSWindow? = { nil }
+    private var peek = PeekState()
+    /// The fence windows brought up for the peek, and the toolbar's.
+    private var peekWindows: [NSWindow] = []
+    private var peekEscape: HotKey?
+    private lazy var peekOutsideClicks = OutsideClickMonitor(
+        // The fences, the toolbar and their menus, popovers and cards count as inside;
+        // Settings, another app or the Desktop don't.
+        inside: { NSApp.windows.filter { !$0.styleMask.contains(.titled) || $0 is NSPanel } },
+        onOutsideClick: { [weak self] in self?.endPeek(.outsideClick) }
+    )
 
     /// True while Show/Hide Fences has every fence hidden and the Desktop showing its files
     /// as usual. Kept across launches.
@@ -189,6 +202,8 @@ final class FenceCoordinator: ObservableObject {
         let controller = FenceSetupController(fenceID: id, fenceWindow: window, coordinator: self)
         controller.onFinish = { [weak self, weak controller] in
             if self?.setup === controller { self?.setup = nil }
+            // Made during a peek, it stays up with the others.
+            if let self, self.peek.isPeeking { self.joinPeek(window) }
         }
         controller.onDone = { [weak self] in
             guard let self, self.store.fence(id)?.isStickyNote == true else { return }
@@ -233,6 +248,7 @@ final class FenceCoordinator: ObservableObject {
         if noteEditor?.fenceID == id { closeNoteEditor() }
         unhide(fence.items)
         stickyTextViews.removeObject(forKey: id as NSUUID)
+        if let window = controllers[id]?.window { peekWindows.removeAll { $0 === window } }
         controllers.removeValue(forKey: id)?.close()
         tabFrames[id] = nil
         tabStripFrames[id] = nil
@@ -401,6 +417,7 @@ final class FenceCoordinator: ObservableObject {
     /// as it would without Clutter Buster; or hides the files again and shows the fences.
     func setFencesHidden(_ hidden: Bool) {
         guard hidden != fencesHidden else { return }
+        endPeek(.fencesShownOrHidden)
         fencesHidden = hidden
         UserDefaults.standard.set(hidden, forKey: Self.fencesHiddenKey)
         if hidden {
@@ -423,14 +440,20 @@ final class FenceCoordinator: ObservableObject {
     }
 
     /// Brings a clicked fence above app windows until the next click elsewhere. A fence in
-    /// its setup card already floats, and the card settles it.
+    /// its setup card already floats, and the card settles it. During a peek every fence is
+    /// up already, so the clicked one just comes in front of the others.
     func raise(_ id: UUID) {
         // A click already on its way when the fences were hidden would bring one back.
-        guard !fencesHidden, setup?.fenceID != id, let window = controllers[id]?.window else { return }
+        guard fencesShowing, setup?.fenceID != id, let window = controllers[id]?.window else { return }
+        if peek.isPeeking {
+            _ = peek.handle(.clickInFence, fencesHidden: fencesHidden)
+            window.orderFrontRegardless()
+            return
+        }
         if raisedFenceID != id {
             lowerRaisedFence()
             raisedFenceID = id
-            window.level = .floating
+            window.level = Self.raisedLevel
             Log.write("raised fence \(id)")
         }
         window.orderFrontRegardless()
@@ -450,6 +473,111 @@ final class FenceCoordinator: ObservableObject {
         Log.write("lowered fence \(id)")
     }
 
+    // MARK: Peeking
+
+    var isPeeking: Bool { peek.isPeeking }
+
+    /// Not hidden with Show/Hide Fences, or out for a peek.
+    var fencesShowing: Bool { !fencesHidden || peek.isPeeking }
+
+    /// For the Peek at Fences shortcut: brings every fence and the toolbar above app windows,
+    /// or puts them back.
+    func togglePeek() { handlePeek(.hotKey) }
+
+    func endPeek(_ trigger: PeekState.Trigger) { handlePeek(trigger) }
+
+    private func handlePeek(_ trigger: PeekState.Trigger) {
+        switch peek.handle(trigger, fencesHidden: fencesHidden) {
+        case .start(let showingHidden): startPeek(showingHidden: showingHidden)
+        case .end(let hidingAgain): finishPeek(trigger, hidingAgain: hidingAgain)
+        case nil: break
+        }
+    }
+
+    /// Hidden fences come out without their Desktop files being hidden again: the files stay
+    /// on the Desktop, and the fences show their items regardless. A This Space Only fence on
+    /// another Space stays there; hidden, its Space isn't known, so it stays hidden.
+    private func startPeek(showingHidden: Bool) {
+        setup?.finish()
+        // A fence raised by a click joins the peek as it is, popovers and all.
+        if raisedFenceID != nil {
+            raisedFenceID = nil
+            raisedOutsideClicks.stop()
+        }
+        var windows: [NSWindow] = []
+        var skipped: [String] = []
+        for fence in store.fences {
+            guard let window = controllers[fence.id]?.window else { continue }
+            let onThisSpace = showingHidden ? fence.showsOnAllSpaces : window.isVisible && (fence.showsOnAllSpaces || window.isOnActiveSpace)
+            guard onThisSpace else {
+                if !fence.showsOnAllSpaces { skipped.append(Self.quoted(fence.title)) }
+                continue
+            }
+            if showingHidden { applyFrame(fence.id) }
+            windows.append(window)
+        }
+        let toolbar = toolbarWindow()
+        peekWindows = Self.backToFront(windows + [toolbar].compactMap { $0 })
+        let fades = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        for window in peekWindows {
+            window.level = Self.raisedLevel
+            if fades { window.alphaValue = 0 }
+            window.orderFrontRegardless()
+        }
+        if fades {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.16
+                for window in peekWindows { window.animator().alphaValue = 1 }
+            }
+        }
+        peekOutsideClicks.start()
+        peekEscape = HotKey(.escape) { [weak self] in self?.endPeek(.escape) }
+        if peekEscape?.isRegistered != true { Log.write("peek: Esc couldn't be set up to end it (status \(peekEscape?.status ?? 0))") }
+        Log.write("peek: started; raised \(windows.count) fence(s)\(toolbar == nil ? "" : " and the toolbar")\(showingHidden ? ", shown just for the peek while the fences are hidden" : "")\(skipped.isEmpty ? "" : "; left \(skipped.joined(separator: ", ")) on its own Space")")
+    }
+
+    private func finishPeek(_ trigger: PeekState.Trigger, hidingAgain: Bool) {
+        peekOutsideClicks.stop()
+        peekEscape?.unregister()
+        peekEscape = nil
+        closeSettings()
+        closeNoteEditor()
+        // A note stops being typed in, which saves it.
+        for fence in store.fences where fence.isStickyNote {
+            guard let window = controllers[fence.id]?.window, window.firstResponder is NSText else { continue }
+            window.makeFirstResponder(nil)
+        }
+        let toolbar = toolbarWindow()
+        let windows = Self.backToFront(peekWindows)
+        peekWindows = []
+        let setupWindow = setup.flatMap { controllers[$0.fenceID]?.window }
+        for window in windows where window !== setupWindow {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0
+                window.animator().alphaValue = 1
+            }
+            window.level = DesktopLevelWindow.desktopLevel
+            if hidingAgain, window !== toolbar { window.orderOut(nil) }
+        }
+        let fences = windows.count - (windows.contains { $0 === toolbar } ? 1 : 0)
+        Log.write("peek: ended by \(trigger.rawValue); lowered \(fences) fence(s)\(hidingAgain ? " and hid them again" : "")")
+    }
+
+    /// A fence that shows up during a peek, from its setup card or an undo, comes up too.
+    private func joinPeek(_ window: NSWindow) {
+        guard peek.isPeeking, !peekWindows.contains(where: { $0 === window }) else { return }
+        window.level = Self.raisedLevel
+        window.orderFrontRegardless()
+        peekWindows.append(window)
+    }
+
+    /// Windows changing level keep their order this way: the first goes to the back.
+    private static func backToFront(_ windows: [NSWindow]) -> [NSWindow] {
+        let order = NSApp.orderedWindows
+        // Ordered out ones aren't listed, and go behind.
+        return windows.sorted { (order.firstIndex(of: $0) ?? .max) > (order.firstIndex(of: $1) ?? .max) }
+    }
+
     /// Shows all of a fence's settings, or just its title style, in a popover pointing at
     /// `anchor` from its `edge`
     /// (`.minY` is below). Without room there it sits beside the fence instead, so the fence
@@ -460,7 +588,7 @@ final class FenceCoordinator: ObservableObject {
         // Let a menu that triggered this finish closing first.
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
-                guard let self, !self.fencesHidden, self.store.fence(id) != nil, let window = self.controllers[id]?.window,
+                guard let self, self.fencesShowing, self.store.fence(id) != nil, let window = self.controllers[id]?.window,
                       let content = window.contentView else { return }
                 self.closeSettings()
                 self.raise(id)
@@ -1023,12 +1151,15 @@ final class FenceCoordinator: ObservableObject {
     func springOpen(_ item: FenceItem) {
         Log.write("spring-loading: opening \"\(item.finderName)\" in Finder")
         lowerRaisedFence()
+        endPeek(.openedItem)
         NSWorkspace.shared.open(item.url)
     }
 
     /// Opens a file or app, opens a link in the default browser, edits a note or runs a
     /// Shortcut. `fenceID` is the fence showing the item, which a note's editor points into.
     func open(_ item: FenceItem, in fenceID: UUID? = nil) {
+        // A note opens in its fence, which stays up.
+        if item.kind != .note { endPeek(.openedItem) }
         switch item.kind {
         case .file:
             // The opened app comes forward; the fence goes back under it.
@@ -1062,6 +1193,7 @@ final class FenceCoordinator: ObservableObject {
     /// Selects a file in Finder. A fenced Desktop file is unhidden first so Finder can show
     /// it, and hidden again when Clutter Buster next becomes active, or after a minute.
     func revealInFinder(_ url: URL) {
+        endPeek(.revealedInFinder)
         let url = url.standardizedFileURL
         guard desktop.hiddenFiles.paths.contains(url.path), !desktop.hiddenFiles.unhide([url]).isEmpty else {
             NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -1323,7 +1455,8 @@ final class FenceCoordinator: ObservableObject {
         // Space that's active when it's first shown.
         controller.window.showsOnAllSpaces = fence.showsOnAllSpaces
         controller.window.setFrame(displayFrame(for: fence), display: true)
-        if !fencesHidden { controller.window.orderFrontRegardless() }
+        if fencesShowing { controller.window.orderFrontRegardless() }
+        joinPeek(controller.window)
     }
 
     private func displayFrame(for fence: Fence) -> CGRect {

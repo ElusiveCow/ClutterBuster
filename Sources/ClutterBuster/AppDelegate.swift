@@ -56,10 +56,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
             guard let toolbar, toolbar.isVisible else { return nil }
             return toolbar.window.frame
         }
+        coordinator.toolbarWindow = { [weak toolbar] in
+            guard let toolbar, toolbar.isVisible else { return nil }
+            return toolbar.window
+        }
         undoToast.placement = { [weak toolbar] in toolbar?.placement }
         coordinator.onUndoRecorded = { [weak self] entry in self?.undoToast.show(entry) }
         coordinator.onDisplayLayoutChanged = { [weak toolbar] in toolbar?.applyStoredPlacement() }
         buildStatusItem()
+        PeekShortcut.shared.onPress = { [weak self] in self?.coordinator.togglePeek() }
+        PeekShortcut.shared.start()
 
         // Ask for Finder access up front rather than on the first drop.
         _ = desktop.positionsNow()

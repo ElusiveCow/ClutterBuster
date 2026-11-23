@@ -248,7 +248,7 @@ extension FenceCoordinator {
     /// Opens a note in a popover pointing at its tile. The fence is raised meanwhile, like
     /// for its settings, and the popover closes on a click anywhere else.
     func editNote(_ itemID: UUID, in fenceID: UUID, isNew: Bool = false, retry: Bool = true) {
-        guard !fencesHidden, let fence = store.fence(fenceID),
+        guard fencesShowing, let fence = store.fence(fenceID),
               let item = fence.items.first(where: { $0.id == itemID }), item.kind == .note,
               let window = window(of: fenceID), let content = window.contentView else { return }
         if noteEditor?.itemID == itemID { return }

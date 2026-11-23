@@ -363,6 +363,8 @@ private final class SnapOutlineWindow: NSWindow {
 
     func show(_ shape: ToolbarShape, frame: CGRect, below toolbar: NSWindow) {
         outline.shape = shape
+        // Up with the toolbar during a peek.
+        level = toolbar.level
         setFrame(frame, display: true)
         order(.below, relativeTo: toolbar.windowNumber)
         guard alphaValue < 1 else { return }
