@@ -11,6 +11,7 @@ struct SettingsView: View {
     @ObservedObject private var snapping = SnapSettings.shared
     @ObservedObject private var newFiles = NewFileSettings.shared
     @ObservedObject private var loginItem = LoginItem.shared
+    @ObservedObject private var peek = PeekShortcut.shared
     let onQuit: () -> Void
 
     /// The form scrolls rather than growing past the screen.
@@ -91,6 +92,7 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            KeyboardSection(peek: peek)
             StartupSection(loginItem: loginItem, layoutCount: store.displayLayouts.count)
             Section("About") {
                 HStack(spacing: 12) {
@@ -116,10 +118,14 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 520, height: Self.height)
-        .onAppear { loginItem.refresh() }
+        .onAppear {
+            loginItem.refresh()
+            peek.recheck()
+        }
         // Approving in System Settings and coming back shows the new status.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             loginItem.refresh()
+            peek.recheck()
         }
     }
 
