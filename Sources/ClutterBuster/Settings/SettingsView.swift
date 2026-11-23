@@ -8,6 +8,7 @@ struct SettingsView: View {
     @EnvironmentObject private var store: FenceStore
     @ObservedObject private var themes = ThemeSettings.shared
     @ObservedObject private var toolbar = ToolbarSettings.shared
+    @ObservedObject private var snapping = SnapSettings.shared
     let onQuit: () -> Void
 
     var body: some View {
@@ -56,6 +57,18 @@ struct SettingsView: View {
                 Text("New fences")
             } footer: {
                 Text("Color and opacity apply to the Classic theme.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Section {
+                Toggle("Snap while moving and resizing", isOn: $snapping.enabled)
+                Stepper("Gap between fences: \(snapping.gap) pt", value: $snapping.gap, in: AppSettings.snapGapRange)
+                    .disabled(!snapping.enabled)
+            } header: {
+                Text("Snapping")
+            } footer: {
+                Text("A fence you drag or resize lines up with the others, sits the gap away from its neighbors and stops at the screen's edges. An outline shows where it will land when you let go. Hold \u{2325} Option while dragging to do the opposite for that drag. The magnet in the toolbar turns snapping on and off too.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)

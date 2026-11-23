@@ -383,12 +383,22 @@ private struct OutlineView: View {
     @ObservedObject var outline: OutlineModel
 
     var body: some View {
-        let shape = ToolbarOutlineShape(shape: outline.shape)
+        DropOutline(shape: ToolbarOutlineShape(shape: outline.shape))
+    }
+}
+
+/// The faint dashed outline of where something lands when it's let go: the toolbar in a
+/// snap zone, or a fence that has snapped.
+struct DropOutline<S: Shape>: View {
+    let shape: S
+
+    var body: some View {
         shape
             .fill(Color.white.opacity(0.12))
             .overlay(shape.stroke(Color.white.opacity(0.8), style: StrokeStyle(lineWidth: 2, dash: [7, 5])))
             .shadow(color: .black.opacity(0.35), radius: 2)
             .padding(2)
+            .allowsHitTesting(false)
     }
 }
 

@@ -935,18 +935,106 @@ final class FenceCoordinator: ObservableObject {
         interacting.insert(id)
     }
 
-    func updateLiveFrame(_ id: UUID, _ frame: CGRect) {
+    /// Shows `frame` while the fence is moved or resized. With `snapping`, and snapping on
+    /// (holding Option does the opposite for as long as it's held), an outline shows where
+    /// the fence snaps to; the fence itself follows the pointer until it's let go.
+    func updateLiveFrame(_ id: UUID, _ frame: CGRect, snapping mode: SnapEngine.Mode? = nil) {
         liveFrames[id] = frame
         applyFrame(id)
+        if let mode { previewSnap(id, frame, mode: mode) }
     }
 
+    /// Keeps the fence where it was let go, or settles it into the snap outline.
     func endInteraction(_ id: UUID) {
+        let snapped = snapPreview?.id == id ? snapPreview?.frame : nil
         if let frame = liveFrames.removeValue(forKey: id) {
-            store.update(id) { $0.frame = frame }
+            store.update(id) { $0.frame = snapped ?? frame }
         }
         interacting.remove(id)
         clampToScreens(id)
-        applyFrame(id)
+        applyFrame(id, animated: snapped != nil)
+        endSnapping(id)
+    }
+
+    // MARK: Snapping
+
+    private let snapThreshold: CGFloat = 10
+    private lazy var snapOutline = SnapPreviewWindow()
+    /// Timers gliding released fences into their snapped frames.
+    private var settles: [UUID: Timer] = [:]
+    /// Where the fence being dragged would snap to (its expanded frame), what it lines up
+    /// with there, and the fences those guides refer to. Nil while nothing is in reach.
+    private var snapPreview: (id: UUID, frame: CGRect, guides: [SnapEngine.Guide], others: [UUID])?
+    /// Whether Option was held at the last update of the drag, so flipping it is logged once.
+    private var snapOptionHeld: (id: UUID, held: Bool)?
+
+    private func previewSnap(_ id: UUID, _ frame: CGRect, mode: SnapEngine.Mode) {
+        let settings = SnapSettings.shared
+        let optionHeld = NSEvent.modifierFlags.contains(.option)
+        if snapOptionHeld?.id != id || snapOptionHeld?.held != optionHeld {
+            if optionHeld || snapOptionHeld?.id == id {
+                Log.write("snap: Option \(optionHeld ? "held" : "released"), snapping \(settings.enabled != optionHeld ? "on" : "off") for this drag")
+            }
+            snapOptionHeld = (id, optionHeld)
+        }
+        snapPreview = nil
+        guard settings.enabled != optionHeld, let fence = store.fence(id), let window = controllers[id]?.window else {
+            snapOutline.hide()
+            return
+        }
+        let display = displayFrame(of: frame, for: fence)
+        let screen = Self.screen(for: display)
+        let others = store.fences.filter { $0.id != id && displayFrame(for: $0).intersects(screen.frame) }
+        var minimum = minimumSize(for: fence)
+        if fence.isCollapsed { minimum.height = 0 }
+        let engine = SnapEngine(threshold: snapThreshold, gap: CGFloat(settings.gap), minimumSize: minimum)
+        let result = engine.snap(display, mode: mode, others: others.map { displayFrame(for: $0) }, screen: screen.visibleFrame)
+        guard !result.guides.isEmpty else {
+            snapOutline.hide()
+            return
+        }
+        // A collapsed fence keeps its expanded height below its title bar.
+        let snapped = fence.isCollapsed
+            ? CGRect(x: result.frame.minX, y: result.frame.maxY - frame.height, width: result.frame.width, height: frame.height)
+            : result.frame
+        snapPreview = (id, snapped, result.guides, others.map(\.id))
+        snapOutline.show(outline: result.frame, guides: result.guides, on: screen.frame, below: window)
+    }
+
+    /// Fades the outline out and logs what the fence settled against.
+    private func endSnapping(_ id: UUID) {
+        if snapOptionHeld?.id == id { snapOptionHeld = nil }
+        guard let snap = snapPreview, snap.id == id else {
+            snapOutline.hide()
+            return
+        }
+        snapPreview = nil
+        snapOutline.fadeOut()
+        guard let fence = store.fence(id) else { return }
+        let titles = snap.others.map { "\"\(store.fence($0)?.title ?? "?")\"" }
+        let reasons = snap.guides.flatMap { guide in
+            guide.reasons.map { reason -> String in
+                let side = "\(guide.axis == .x ? "x" : "y") \(Int(guide.position))"
+                switch reason {
+                case .screenEdge: return "screen edge at \(side)"
+                case .flush(let index): return "beside \(titles[index]) at \(side)"
+                case .aligned(let index): return "lined up with \(titles[index]) at \(side)"
+                }
+            }
+        }
+        Log.write("snap: \"\(fence.title)\" settled at \(fence.frame.integral), \(reasons.joined(separator: ", "))")
+    }
+
+    /// The screen a fence is on: the one under the pointer while it's dragged, else the one
+    /// holding most of it.
+    private static func screen(for frame: CGRect) -> NSScreen {
+        let mouse = NSEvent.mouseLocation
+        if let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) { return screen }
+        let area = { (screen: NSScreen) -> CGFloat in
+            let overlap = screen.frame.intersection(frame)
+            return overlap.isNull ? 0 : overlap.width * overlap.height
+        }
+        return NSScreen.screens.max { area($0) < area($1) } ?? NSScreen.main ?? NSScreen.screens[0]
     }
 
     func resizedFrame(_ id: UUID, from start: CGRect, edges: ResizeEdges, delta: CGSize) -> CGRect {
@@ -982,16 +1070,52 @@ final class FenceCoordinator: ObservableObject {
     }
 
     private func displayFrame(for fence: Fence) -> CGRect {
-        let frame = liveFrames[fence.id] ?? fence.frame
+        displayFrame(of: liveFrames[fence.id] ?? fence.frame, for: fence)
+    }
+
+    /// What shows of a fence at `frame`: all of it, or just the title bar when collapsed.
+    private func displayFrame(of frame: CGRect, for fence: Fence) -> CGRect {
         guard fence.isCollapsed else { return frame }
         let height = collapsedHeight(fence)
         return CGRect(x: frame.minX, y: frame.maxY - height, width: frame.width, height: height)
     }
 
-    private func applyFrame(_ id: UUID) {
-        guard let fence = store.fence(id) else { return }
-        controllers[id]?.window.setFrame(displayFrame(for: fence), display: true)
+    private func applyFrame(_ id: UUID, animated: Bool = false) {
+        guard let fence = store.fence(id), let window = controllers[id]?.window else { return }
+        settles.removeValue(forKey: id)?.invalidate()
+        let frame = displayFrame(for: fence)
+        if animated, window.isVisible, window.frame != frame {
+            settle(id, window, from: window.frame, to: frame)
+        } else {
+            window.setFrame(frame, display: true)
+        }
         if setup?.fenceID == id { setup?.reposition() }
+    }
+
+    /// Glides a released fence into its snapped frame. Driven by a timer that any later frame
+    /// change cancels, rather than the window's animator, whose animation can land after a
+    /// later frame change and undo it.
+    private func settle(_ id: UUID, _ window: NSWindow, from start: CGRect, to target: CGRect) {
+        let began = Date()
+        let duration = 0.16
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                let progress = min(Date().timeIntervalSince(began) / duration, 1)
+                let eased = 1 - pow(1 - progress, 3)
+                func mix(_ from: CGFloat, _ to: CGFloat) -> CGFloat { from + (to - from) * eased }
+                window.setFrame(CGRect(
+                    x: mix(start.minX, target.minX), y: mix(start.minY, target.minY),
+                    width: mix(start.width, target.width), height: mix(start.height, target.height)
+                ), display: true)
+                if self?.setup?.fenceID == id { self?.setup?.reposition() }
+                if progress >= 1 {
+                    timer.invalidate()
+                    self?.settles[id] = nil
+                }
+            }
+        }
+        settles[id] = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     private func screensChanged() {

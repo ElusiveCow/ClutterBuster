@@ -22,7 +22,8 @@ struct FenceView: View {
     @State private var gearAnchor = PopoverAnchor()
     @State private var menuAnchor = PopoverAnchor()
 
-    private let corner: CGFloat = 12
+    static let cornerRadius: CGFloat = 12
+    private let corner = FenceView.cornerRadius
 
     var body: some View {
         if let fence = store.fence(fenceID) {
@@ -493,7 +494,7 @@ struct FenceView: View {
                 var frame = start.frame
                 frame.origin.x += mouse.x - start.mouse.x
                 frame.origin.y += mouse.y - start.mouse.y
-                coordinator.updateLiveFrame(fenceID, frame)
+                coordinator.updateLiveFrame(fenceID, frame, snapping: .move)
             }
             .onEnded { _ in
                 dragStart = nil

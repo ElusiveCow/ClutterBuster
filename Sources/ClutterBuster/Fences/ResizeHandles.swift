@@ -110,7 +110,8 @@ private struct ResizeHandle: View {
                         }
                         guard let start else { return }
                         let delta = CGSize(width: mouse.x - start.mouse.x, height: mouse.y - start.mouse.y)
-                        coordinator.updateLiveFrame(fenceID, coordinator.resizedFrame(fenceID, from: start.frame, edges: edges, delta: delta))
+                        let frame = coordinator.resizedFrame(fenceID, from: start.frame, edges: edges, delta: delta)
+                        coordinator.updateLiveFrame(fenceID, frame, snapping: .resize(edges))
                     }
                     .onEnded { _ in
                         start = nil

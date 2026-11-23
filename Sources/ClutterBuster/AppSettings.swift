@@ -6,7 +6,10 @@ enum AppSettings {
     static let defaultOpacityKey = "defaultOpacity"
     static let globalThemeKey = "globalTheme"
     static let animateThemesKey = "animateThemes"
+    static let snapKey = "snapFences"
+    static let snapGapKey = "snapGap"
     static let iconsPerRowRange = 2...8
+    static let snapGapRange = 0...24
 
     static var defaultColor: FenceColor {
         FenceColor(rawValue: UserDefaults.standard.string(forKey: defaultColorKey) ?? "") ?? .slate
@@ -69,5 +72,30 @@ final class ThemeSettings: ObservableObject {
     private func updateMotion() {
         let allowed = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
         if allowed != motionAllowed { motionAllowed = allowed }
+    }
+}
+
+/// Whether fences snap while they're moved or resized, and the gap left between neighbors.
+/// Settings and the toolbar's magnet share it.
+@MainActor
+final class SnapSettings: ObservableObject {
+    static let shared = SnapSettings()
+
+    @Published var enabled: Bool {
+        didSet {
+            UserDefaults.standard.set(enabled, forKey: AppSettings.snapKey)
+            if enabled != oldValue { Log.write("snapping \(enabled ? "on" : "off")") }
+        }
+    }
+
+    @Published var gap: Int {
+        didSet { UserDefaults.standard.set(gap, forKey: AppSettings.snapGapKey) }
+    }
+
+    private init() {
+        let defaults = UserDefaults.standard
+        enabled = defaults.object(forKey: AppSettings.snapKey) as? Bool ?? true
+        let gap = defaults.object(forKey: AppSettings.snapGapKey) as? Int ?? 6
+        self.gap = min(max(gap, AppSettings.snapGapRange.lowerBound), AppSettings.snapGapRange.upperBound)
     }
 }
