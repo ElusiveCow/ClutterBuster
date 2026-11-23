@@ -16,9 +16,36 @@ struct SearchResult: Identifiable {
     let icon: NSImage
     /// Set for links, notes and Shortcuts, which open and show through their fence.
     var itemID: UUID?
+    /// Set for a line of a sticky note fence's note.
+    var noteMatch: NoteMatch?
 
-    var id: String { section.rawValue + (itemID?.uuidString ?? url?.path ?? name) }
-    var isFile: Bool { itemID == nil }
+    var id: String {
+        if let noteMatch { return section.rawValue + noteMatch.fenceID.uuidString + ":\(noteMatch.line)" }
+        return section.rawValue + (itemID?.uuidString ?? url?.path ?? name)
+    }
+    var isFile: Bool { itemID == nil && noteMatch == nil }
+}
+
+/// Where search text was found in a sticky note: the fence, which line, and the text to select.
+struct NoteMatch {
+    let fenceID: UUID
+    let line: Int
+    let range: NSRange
+
+    /// One match per line of the note that contains `query`, ignoring checklist markers.
+    static func find(_ query: String, in note: String, fenceID: UUID) -> [(match: NoteMatch, text: String)] {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return [] }
+        let text = note as NSString
+        return NoteEditing.lineRanges(in: text).enumerated().compactMap { index, line in
+            let start = NoteEditing.markerRange(in: text, line: line).map(NSMaxRange) ?? line.location
+            let content = NSRange(location: start, length: NSMaxRange(line) - start)
+            let found = text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive], range: content)
+            guard found.location != NSNotFound else { return nil }
+            let shown = text.substring(with: content).trimmingCharacters(in: .whitespaces)
+            return (NoteMatch(fenceID: fenceID, line: index, range: found), shown)
+        }
+    }
 }
 
 /// Searches fence items, Desktop files that aren't in a fence, and the rest of the Mac
@@ -95,6 +122,17 @@ final class SearchService: ObservableObject {
         var fenceResults: [SearchResult] = []
         var fencedPaths: Set<String> = []
         for fence in store.fences {
+            if fence.isStickyNote {
+                let icon = StickyNoteIcon.image(paper: fence.paper)
+                for (match, line) in NoteMatch.find(text, in: fence.note, fenceID: fence.id) {
+                    fenceResults.append(SearchResult(
+                        section: .fences, url: nil, name: String(line.prefix(200)),
+                        subtitle: "Sticky note \u{00B7} \u{201C}\(fence.title)\u{201D}",
+                        icon: icon, noteMatch: match
+                    ))
+                }
+                continue
+            }
             for item in fence.items {
                 if item.isFile { fencedPaths.insert(item.path) }
                 guard item.matches(text) else { continue }

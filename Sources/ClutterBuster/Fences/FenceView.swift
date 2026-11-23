@@ -34,17 +34,31 @@ struct FenceView: View {
             VStack(spacing: 0) {
                 titleBar(fence, style: style, metrics: metrics, animate: animate)
                 if !fence.isCollapsed {
-                    tabBar(fence, style: style, metrics: metrics)
+                    if fence.holdsItems {
+                        tabBar(fence, style: style, metrics: metrics)
+                    }
                     GeometryReader { geo in
                         let art = cornerArt(fence, style: style, area: geo.size, metrics: metrics)
                         ZStack(alignment: .bottomTrailing) {
                             ThemeBody(style: style, animate: animate)
-                            ItemGrid(
-                                fence: fence,
-                                style: style,
-                                items: coordinator.displayedItems(fence, tab: tab),
-                                reservedBottom: art?.band ?? 0
-                            )
+                            if fence.isStickyNote {
+                                // Stops above the corner art, like the grid, so no text sits behind it.
+                                StickyNoteView(
+                                    fenceID: fenceID,
+                                    note: fence.note,
+                                    look: StickyNoteLook(style: style, paper: fence.paper, textScale: fence.textScale),
+                                    bottomInset: art == nil ? Self.pillClearance : 0,
+                                    fences: coordinator
+                                )
+                                .padding(.bottom, art?.band ?? 0)
+                            } else {
+                                ItemGrid(
+                                    fence: fence,
+                                    style: style,
+                                    items: coordinator.displayedItems(fence, tab: tab),
+                                    reservedBottom: art?.band ?? 0
+                                )
+                            }
                             if let art {
                                 CornerArt(layout: art, style: style, animate: animate)
                             }
@@ -95,11 +109,13 @@ struct FenceView: View {
             .onChange(of: fence.textScale) { _, scale in
                 showBadge("\(Int((scale * 100).rounded()))%")
             }
-            // Files and apps from Finder, and links from a browser.
+            // Files and apps from Finder, and links from a browser. A sticky note takes only
+            // text, which its note handles itself.
             .dropDestination(for: URL.self) { urls, _ in
+                guard store.fence(fenceID)?.holdsItems == true else { return false }
                 coordinator.addDropped(urls, to: fenceID)
                 return true
-            } isTargeted: { isDropTargeted = $0 }
+            } isTargeted: { isDropTargeted = $0 && store.fence(fenceID)?.holdsItems == true }
         }
     }
 
@@ -121,6 +137,11 @@ struct FenceView: View {
                 .fill(style.titleText.opacity(0.2))
                 .frame(width: 1, height: 14)
                 .padding(.horizontal, 2)
+            if fence.isStickyNote {
+                pillButton("checkmark.square", help: "Checklist (\u{2318}L)", style: style) {
+                    coordinator.toggleChecklist(fenceID)
+                }
+            }
             pillButton("gearshape", help: "Fence settings", style: style) {
                 coordinator.showSettings(fenceID, from: gearAnchor.view)
             }
@@ -180,6 +201,14 @@ struct FenceView: View {
                     .onChange(of: titleFocused) { _, focused in
                         if !focused { commitRename() }
                     }
+                    .padding(.horizontal, 34)
+            } else if fence.isStickyNote {
+                Text(fence.title)
+                    .font(title.font)
+                    .foregroundStyle(title.color)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .shadow(color: style.textShadow, radius: 2, y: 1)
                     .padding(.horizontal, 34)
             } else {
                 // Collapsed fences count everything they hold; expanded ones count the tab shown.
@@ -477,10 +506,19 @@ struct FenceView: View {
     /// The corner picture and the band along the bottom that tiles stay above, so they never
     /// sit or scroll behind it. The grid above keeps at least one whole row of tiles at the
     /// fence's text size. Without art the grid uses the full height.
+    /// A sticky note on paper has none, and its note keeps room for a few lines above it.
     private func cornerArt(_ fence: Fence, style: ThemeStyle, area: CGSize, metrics: FenceMetrics) -> CornerArtLayout? {
+        if fence.isStickyNote {
+            guard fence.paper == nil else { return nil }
+            let lines = StickyNoteLook(style: style, paper: nil, textScale: fence.textScale).lineHeight * 3
+            return CornerArtLayout.make(fence: fence, style: style, area: area, minimumGrid: max(metrics.minimumGridHeight, lines))
+        }
         let oneRow = GridMetrics.oneRowHeight(width: area.width, columns: fence.iconsPerRow, textScale: metrics.scale)
         return CornerArtLayout.make(fence: fence, style: style, area: area, minimumGrid: max(metrics.minimumGridHeight, oneRow))
     }
+
+    /// Room under a sticky note's last line to scroll it clear of the hover controls.
+    private static let pillClearance: CGFloat = 34
 
     private var moveGesture: some Gesture {
         DragGesture(minimumDistance: 2)
@@ -528,25 +566,48 @@ struct FenceMenu: View {
     @ObservedObject private var themes = ThemeSettings.shared
 
     var body: some View {
-        // Color and transparency belong to Classic; other themes set their own.
-        let isClassic = (fence.theme ?? themes.globalTheme) == .classic
-        Menu("Add") {
-            // Each waits for the menu to finish closing before its dialog or popover opens.
-            Button("Link…") { later { coordinator.promptForLink(fence.id) } }
-            Button("Note") { later { coordinator.addNote(to: fence.id) } }
-            Button("Shortcut…") { later { coordinator.chooseShortcuts(fence.id) } }
-            Divider()
-            Button("File or App…") { later { coordinator.chooseFiles(fence.id) } }
+        // Color and transparency belong to Classic; other themes set their own. A sticky note
+        // on paper uses neither.
+        let usesTheme = fence.holdsItems || fence.paper == nil
+        let isClassic = usesTheme && (fence.theme ?? themes.globalTheme) == .classic
+        if fence.holdsItems {
+            Menu("Add") {
+                // Each waits for the menu to finish closing before its dialog or popover opens.
+                Button("Link…") { later { coordinator.promptForLink(fence.id) } }
+                Button("Note") { later { coordinator.addNote(to: fence.id) } }
+                Button("Shortcut…") { later { coordinator.chooseShortcuts(fence.id) } }
+                Divider()
+                Button("File or App…") { later { coordinator.chooseFiles(fence.id) } }
+            }
         }
         Button("Fence Settings…", action: onSettings)
         Divider()
         Button("Rename…", action: onRename)
         Button("Title Style…", action: onTitleStyle)
-        Button("New Tab", action: onNewTab)
-        Menu("Sort \u{201C}\(fence.currentTab.name)\u{201D}") {
-            SortMenuContent(fenceID: fence.id, tab: fence.currentTab)
+        if fence.holdsItems {
+            Button("New Tab", action: onNewTab)
+            Menu("Sort \u{201C}\(fence.currentTab.name)\u{201D}") {
+                SortMenuContent(fenceID: fence.id, tab: fence.currentTab)
+            }
         }
         Divider()
+        if fence.isStickyNote {
+            Menu("Paper") {
+                ForEach(PaperColor.allCases) { paper in
+                    Button {
+                        coordinator.setPaper(fence.id, paper)
+                    } label: {
+                        if fence.paper == paper { Label(paper.name, systemImage: "checkmark") } else { Text(paper.name) }
+                    }
+                }
+                Divider()
+                Button {
+                    coordinator.setPaper(fence.id, nil)
+                } label: {
+                    if fence.paper == nil { Label("Use Theme", systemImage: "checkmark") } else { Text("Use Theme") }
+                }
+            }
+        }
         Menu("Theme") {
             Button {
                 coordinator.setTheme(fence.id, nil)
@@ -563,6 +624,7 @@ struct FenceMenu: View {
                 }
             }
         }
+        .disabled(!usesTheme)
         Menu("Color") {
             ForEach(FenceColor.allCases) { color in
                 Button {
@@ -573,12 +635,14 @@ struct FenceMenu: View {
             }
         }
         .disabled(!isClassic)
-        Menu("Icons per Row") {
-            ForEach(Array(AppSettings.iconsPerRowRange), id: \.self) { count in
-                Button {
-                    coordinator.setIconsPerRow(fence.id, count)
-                } label: {
-                    if count == fence.iconsPerRow { Label("\(count)", systemImage: "checkmark") } else { Text("\(count)") }
+        if fence.holdsItems {
+            Menu("Icons per Row") {
+                ForEach(Array(AppSettings.iconsPerRowRange), id: \.self) { count in
+                    Button {
+                        coordinator.setIconsPerRow(fence.id, count)
+                    } label: {
+                        if count == fence.iconsPerRow { Label("\(count)", systemImage: "checkmark") } else { Text("\(count)") }
+                    }
                 }
             }
         }
@@ -602,10 +666,12 @@ struct FenceMenu: View {
             Button("Reset to 100%") { coordinator.setTextScale(fence.id, 1) }
                 .disabled(fence.textScale == 1)
         }
-        Button(fence.tabsCollapsed ? "Show Tabs" : "Tuck Tabs Away") {
-            coordinator.setTabStrip(fence.id, rows: fence.tabRows, collapsed: !fence.tabsCollapsed)
+        if fence.holdsItems {
+            Button(fence.tabsCollapsed ? "Show Tabs" : "Tuck Tabs Away") {
+                coordinator.setTabStrip(fence.id, rows: fence.tabRows, collapsed: !fence.tabsCollapsed)
+            }
+            .disabled(fence.isCollapsed)
         }
-        .disabled(fence.isCollapsed)
         Button(fence.isCollapsed ? "Expand" : "Collapse") { coordinator.toggleCollapse(fence.id) }
         Menu("Show On") {
             ForEach(FenceSpaces.allCases) { spaces in

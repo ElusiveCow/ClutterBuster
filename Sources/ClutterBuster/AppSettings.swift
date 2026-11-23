@@ -206,6 +206,7 @@ struct AutoFileRule: Codable, Identifiable, Equatable {
     func problem(in fences: [Fence]) -> String? {
         guard let fenceID else { return "Choose a fence" }
         guard let fence = fences.first(where: { $0.id == fenceID }) else { return "Its fence was deleted" }
+        guard fence.holdsItems else { return "Its fence is a sticky note" }
         if let tabID, !fence.tabs.contains(where: { $0.id == tabID }) { return "Its tab was deleted" }
         return nil
     }

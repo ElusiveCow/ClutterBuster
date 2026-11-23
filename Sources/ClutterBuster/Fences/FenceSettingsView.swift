@@ -3,11 +3,13 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// A fence's settings, changed live: name, theme, Classic's color and transparency, and
-/// icons per row. With `showsMore`, also text size, title style and the tab strip. Drawn light on dark,
-/// for the setup card and the settings popover.
+/// icons per row, or a sticky note's paper. With `showsMore`, also text size, title style and
+/// the tab strip. With `showsStyle`, first a choice of files or a sticky note. Drawn light on
+/// dark, for the setup card and the settings popover.
 struct FenceSettingsForm: View {
     let fenceID: UUID
     var showsMore = false
+    var showsStyle = false
     var focusesName = false
     var onSubmit: () -> Void = {}
 
@@ -24,7 +26,18 @@ struct FenceSettingsForm: View {
     }
 
     private func content(_ fence: Fence) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        // A sticky note on paper doesn't use its theme.
+        let usesTheme = !fence.isStickyNote || fence.paper == nil
+        return VStack(alignment: .leading, spacing: 12) {
+            if showsStyle {
+                HStack(spacing: 5) {
+                    ForEach(FenceStyle.allCases) { style in
+                        Chip(title: style.name, selected: fence.style == style) { coordinator.setStyle(fenceID, style) }
+                            .disabled(style == .stickyNote && !fence.items.isEmpty)
+                    }
+                }
+            }
+
             TextField("Fence name", text: $name)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
@@ -37,58 +50,23 @@ struct FenceSettingsForm: View {
                 .onSubmit(onSubmit)
                 .onChange(of: name) { _, newName in coordinator.rename(fenceID, to: newName) }
 
-            SettingsSection(fence.theme.map { "Theme \u{00B7} \($0.name)" } ?? "Theme \u{00B7} Global (\(themes.globalTheme.name))") {
-                LazyVGrid(columns: Array(repeating: GridItem(.fixed(36), spacing: 2), count: 7), alignment: .leading, spacing: 4) {
-                    ThemeSwatch(
-                        style: ThemeStyle.of(themes.globalTheme, for: fence),
-                        selected: fence.theme == nil,
-                        badge: "globe"
-                    ) { coordinator.setTheme(fenceID, nil) }
-                        .help("Use Global (\(themes.globalTheme.name))")
-                    ForEach(FenceTheme.allCases) { theme in
-                        ThemeSwatch(style: ThemeStyle.of(theme, for: fence), selected: fence.theme == theme) {
-                            coordinator.setTheme(fenceID, theme)
-                        }
-                            .help(theme.name)
-                    }
+            if fence.isStickyNote {
+                SettingsSection("Paper \u{00B7} \(fence.paper?.name ?? "Theme")") {
+                    PaperPicker(fence: fence)
                 }
             }
 
-            // Other themes set their own colors and transparency.
-            if (fence.theme ?? themes.globalTheme) == .classic {
-                SettingsSection("Color") {
-                    HStack(spacing: 8) {
-                        ForEach(FenceColor.allCases) { color in
-                            Button { coordinator.setColor(fenceID, color) } label: {
-                                Circle()
-                                    .fill(Color(nsColor: color.body))
-                                    .frame(width: 22, height: 22)
-                                    .overlay(Circle().strokeBorder(Color.white.opacity(color == fence.color ? 0.95 : 0.15), lineWidth: color == fence.color ? 2 : 1))
-                                    .contentShape(Circle())
-                            }
-                            .buttonStyle(.plain)
-                            .help(color.name)
-                        }
-                    }
-                }
+            if usesTheme {
+                themeSections(fence)
+            }
 
-                SettingsSection("Transparency") {
-                    let current = OpacityPreset.nearest(to: fence.opacity)
+            if fence.holdsItems {
+                SettingsSection("Icons per row") {
                     HStack(spacing: 5) {
-                        ForEach(OpacityPreset.allCases) { preset in
-                            Chip(title: preset.name, selected: preset == current) {
-                                coordinator.setOpacity(fenceID, preset.value)
+                        ForEach(Array(AppSettings.iconsPerRowRange), id: \.self) { count in
+                            Chip(title: "\(count)", selected: count == fence.iconsPerRow) {
+                                coordinator.setIconsPerRow(fenceID, count)
                             }
-                        }
-                    }
-                }
-            }
-
-            SettingsSection("Icons per row") {
-                HStack(spacing: 5) {
-                    ForEach(Array(AppSettings.iconsPerRowRange), id: \.self) { count in
-                        Chip(title: "\(count)", selected: count == fence.iconsPerRow) {
-                            coordinator.setIconsPerRow(fenceID, count)
                         }
                     }
                 }
@@ -96,13 +74,15 @@ struct FenceSettingsForm: View {
 
             if showsMore {
                 textSizeSection(fence)
-                SettingsSection("Corner picture") {
-                    CornerPicturePicker(fence: fence)
+                if usesTheme {
+                    SettingsSection("Corner picture") {
+                        CornerPicturePicker(fence: fence)
+                    }
                 }
                 SettingsSection("Title style") {
                     TitleStyleEditor(fenceID: fenceID)
                 }
-                tabsSection(fence)
+                if fence.holdsItems { tabsSection(fence) }
                 spacesSection(fence)
             }
         }
@@ -113,6 +93,59 @@ struct FenceSettingsForm: View {
         // A rename from the title bar shows here too, unless it's being typed here.
         .onChange(of: fence.title) { _, title in
             if !nameFocused, title != name { name = title }
+        }
+        // Switching to a sticky note renames a fence still called "New Fence", even while
+        // the name is being typed.
+        .onChange(of: fence.style) { name = fence.title }
+    }
+
+    /// The theme, and Classic's color and transparency, which other themes set themselves.
+    @ViewBuilder
+    private func themeSections(_ fence: Fence) -> some View {
+        SettingsSection(fence.theme.map { "Theme \u{00B7} \($0.name)" } ?? "Theme \u{00B7} Global (\(themes.globalTheme.name))") {
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(36), spacing: 2), count: 7), alignment: .leading, spacing: 4) {
+                ThemeSwatch(
+                    style: ThemeStyle.of(themes.globalTheme, for: fence),
+                    selected: fence.theme == nil,
+                    badge: "globe"
+                ) { coordinator.setTheme(fenceID, nil) }
+                    .help("Use Global (\(themes.globalTheme.name))")
+                ForEach(FenceTheme.allCases) { theme in
+                    ThemeSwatch(style: ThemeStyle.of(theme, for: fence), selected: fence.theme == theme) {
+                        coordinator.setTheme(fenceID, theme)
+                    }
+                        .help(theme.name)
+                }
+            }
+        }
+
+        if (fence.theme ?? themes.globalTheme) == .classic {
+            SettingsSection("Color") {
+                HStack(spacing: 8) {
+                    ForEach(FenceColor.allCases) { color in
+                        Button { coordinator.setColor(fenceID, color) } label: {
+                            Circle()
+                                .fill(Color(nsColor: color.body))
+                                .frame(width: 22, height: 22)
+                                .overlay(Circle().strokeBorder(Color.white.opacity(color == fence.color ? 0.95 : 0.15), lineWidth: color == fence.color ? 2 : 1))
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(color.name)
+                    }
+                }
+            }
+
+            SettingsSection("Transparency") {
+                let current = OpacityPreset.nearest(to: fence.opacity)
+                HStack(spacing: 5) {
+                    ForEach(OpacityPreset.allCases) { preset in
+                        Chip(title: preset.name, selected: preset == current) {
+                            coordinator.setOpacity(fenceID, preset.value)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -170,6 +203,46 @@ struct FenceSettingsForm: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+}
+
+/// A sticky note's paper: one of the colors, or the fence's theme.
+private struct PaperPicker: View {
+    let fence: Fence
+
+    @EnvironmentObject private var coordinator: FenceCoordinator
+    @ObservedObject private var themes = ThemeSettings.shared
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(PaperColor.allCases) { paper in
+                swatch(paper, selected: fence.paper == paper) {
+                    LinearGradient(colors: [paper.top, paper.bottom], startPoint: .top, endPoint: .bottom)
+                }
+                .help(paper.name)
+            }
+            let theme = ThemeStyle.of(fence.theme ?? themes.globalTheme, for: fence)
+            swatch(nil, selected: fence.paper == nil) {
+                ZStack {
+                    ThemeFillView(fill: theme.body)
+                    Image(systemName: "paintpalette.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(theme.bodyText)
+                }
+            }
+            .help("Use Theme (\(fence.theme?.name ?? themes.globalTheme.name))")
+        }
+    }
+
+    private func swatch(_ paper: PaperColor?, selected: Bool, @ViewBuilder fill: () -> some View) -> some View {
+        Button { coordinator.setPaper(fence.id, paper) } label: {
+            fill()
+                .frame(width: 22, height: 22)
+                .clipShape(Circle())
+                .overlay(Circle().strokeBorder(Color.white.opacity(selected ? 0.95 : 0.15), lineWidth: selected ? 2 : 1))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

@@ -110,9 +110,35 @@ struct ThemeStyle {
     /// Small capsule buttons drawn on the title bar color (the toolbar uses these).
     var titleControl: Color { titleText.opacity(0.13) }
 
-    /// The style a fence draws with: its own theme, or the global one when it has none.
+    /// The style a fence draws with: a sticky note's paper, else its own theme, or the global
+    /// one when it has none.
     static func resolve(_ fence: Fence, global: FenceTheme) -> ThemeStyle {
-        of(fence.theme ?? global, for: fence)
+        if fence.isStickyNote, let paper = fence.paper { return .paper(paper) }
+        return of(fence.theme ?? global, for: fence)
+    }
+
+    /// A sticky note's colored paper: a slightly darker strip of the same color for the title
+    /// and dark ink.
+    static func paper(_ paper: PaperColor) -> ThemeStyle {
+        let ink = PaperColor.ink
+        return ThemeStyle(
+            theme: .classic,
+            isLight: true,
+            body: .gradient([paper.top, paper.bottom]),
+            solidBody: paper.bottom,
+            titleBar: .gradient(paper.title),
+            titleText: ink,
+            titleSecondary: ink.opacity(0.6),
+            tabStrip: paper.bottom,
+            tabPill: .white,
+            tabSelectedText: ink,
+            tabText: ink.opacity(0.6),
+            bodyText: ink,
+            bodySecondary: ink.opacity(0.55),
+            textShadow: .clear,
+            border: .line(ink.opacity(0.14)),
+            accent: Color(hex: 0x3C6FD1)
+        )
     }
 
     /// A theme's style as it would look on `fence`; Classic uses the fence's color and opacity.
@@ -474,6 +500,51 @@ struct ThemeStyle {
                 cornerArt: "notebook_corner",
                 artScale: 1.15
             )
+        }
+    }
+}
+
+extension PaperColor {
+    static let ink = Color(hex: 0x2E2B26)
+
+    var top: Color {
+        switch self {
+        case .yellow: Color(hex: 0xFFF5B8)
+        case .pink: Color(hex: 0xFFE4EA)
+        case .blue: Color(hex: 0xDDEBFC)
+        case .green: Color(hex: 0xE2F5D8)
+        case .lavender: Color(hex: 0xEFE7FC)
+        }
+    }
+
+    var bottom: Color {
+        switch self {
+        case .yellow: Color(hex: 0xFDEE9E)
+        case .pink: Color(hex: 0xFDD9E1)
+        case .blue: Color(hex: 0xD0E3FA)
+        case .green: Color(hex: 0xD5EFC8)
+        case .lavender: Color(hex: 0xE5DAF8)
+        }
+    }
+
+    var title: [Color] {
+        switch self {
+        case .yellow: [Color(hex: 0xF9DF7C), Color(hex: 0xF4D56C)]
+        case .pink: [Color(hex: 0xF8C6D0), Color(hex: 0xF3B9C5)]
+        case .blue: [Color(hex: 0xBCD8F7), Color(hex: 0xB0CFF3)]
+        case .green: [Color(hex: 0xC3E5B2), Color(hex: 0xB6DDA3)]
+        case .lavender: [Color(hex: 0xD6C9F2), Color(hex: 0xCBBCEE)]
+        }
+    }
+
+    /// The faint lines ruled across the paper.
+    var rule: Color {
+        switch self {
+        case .yellow: Color(hex: 0xD9BF5A)
+        case .pink: Color(hex: 0xE3A3B1)
+        case .blue: Color(hex: 0x98BBE6)
+        case .green: Color(hex: 0x9CC98A)
+        case .lavender: Color(hex: 0xB4A2DE)
         }
     }
 }

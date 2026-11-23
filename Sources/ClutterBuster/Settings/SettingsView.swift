@@ -134,7 +134,7 @@ struct SettingsView: View {
                 let index = newFiles.rules.firstIndex { $0.id == rule.id } ?? 0
                 AutoFileRuleRow(
                     rule: $rule,
-                    fences: store.fences,
+                    fences: fileFences,
                     canMoveUp: index > 0,
                     canMoveDown: index < newFiles.rules.count - 1,
                     onMove: { moveRule(rule.id, by: $0) },
@@ -144,7 +144,7 @@ struct SettingsView: View {
             }
             HStack {
                 Button("Add Rule", action: addRule)
-                    .disabled(store.fences.isEmpty)
+                    .disabled(fileFences.isEmpty)
                 Spacer()
                 if !newFiles.rules.isEmpty && !newFiles.mode.usesRules {
                     Text("Rules aren't used with \u{201C}\(newFiles.mode.title)\u{201D}.")
@@ -162,8 +162,11 @@ struct SettingsView: View {
         }
     }
 
+    /// The fences rules can put files in: not sticky notes.
+    private var fileFences: [Fence] { store.fences.filter(\.holdsItems) }
+
     private func addRule() {
-        let fence = store.fences.first
+        let fence = fileFences.first
         newFiles.rules.append(AutoFileRule(kind: .pdf, fenceID: fence?.id, tabID: fence?.tabs.first?.id))
         Log.write("new files: added rule \(newFiles.rules.count)")
     }

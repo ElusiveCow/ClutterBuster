@@ -31,10 +31,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.coordinator.open(item)
         }
         search.showItem = { [weak self] id in self?.coordinator.showInFence(id) }
+        search.showNote = { [weak self] match in
+            Log.write("search: showing line \(match.line + 1) of sticky note \(match.fenceID)")
+            self?.coordinator.focusStickyNote(match.fenceID, select: match.range)
+        }
         self.search = search
         NSApp.mainMenu = Self.editMenu()
         let toolbar = ToolbarWindowController(store: store, fences: coordinator, search: search, actions: ToolbarActions(
             newFence: { [weak self] in self?.coordinator.createFenceWithSetup() },
+            newStickyNote: { [weak self] in self?.coordinator.createFenceWithSetup(style: .stickyNote) },
             collapseAll: { [weak self] in self?.coordinator.setAllCollapsed(true) },
             expandAll: { [weak self] in self?.coordinator.setAllCollapsed(false) },
             toggleFences: { [weak self] in self?.toggleFences() },
@@ -85,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         watcher.stop()
         newFilePrompt.leave(reason: "Clutter Buster quit")
+        coordinator.saveStickyNotes()
         coordinator.restoreAllToDesktop()
         store.saveNow()
         return .terminateNow
@@ -129,6 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.addItem(withTitle: "Search…", action: #selector(openSearch), keyEquivalent: "f").target = self
         menu.addItem(withTitle: "New Fence", action: #selector(newFence), keyEquivalent: "n").target = self
+        menu.addItem(withTitle: "New Sticky Note", action: #selector(newStickyNote), keyEquivalent: "").target = self
         let fencesItem = menu.addItem(withTitle: "Hide Fences", action: #selector(toggleFences), keyEquivalent: "")
         fencesItem.target = self
         fencesMenuItem = fencesItem
@@ -154,6 +161,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func newFence() {
         // Let the status menu finish closing so its click doesn't dismiss the setup card.
         DispatchQueue.main.async { [weak self] in self?.coordinator.createFenceWithSetup() }
+    }
+
+    @objc private func newStickyNote() {
+        DispatchQueue.main.async { [weak self] in self?.coordinator.createFenceWithSetup(style: .stickyNote) }
     }
 
     @objc private func toggleFences() {

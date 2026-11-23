@@ -33,6 +33,8 @@ final class SearchController: NSObject, NSTextFieldDelegate {
     var openItem: (UUID) -> Void = { _ in }
     /// Brings a link, note or Shortcut forward in its fence.
     var showItem: (UUID) -> Void = { _ in }
+    /// Raises a sticky note fence and selects what was found in its note.
+    var showNote: (NoteMatch) -> Void = { _ in }
 
     private let panel = DropdownPanel()
     private let width: CGFloat = 560
@@ -139,7 +141,9 @@ final class SearchController: NSObject, NSTextFieldDelegate {
 
     private func open(_ result: SearchResult, reveal: Bool) {
         close()
-        if let itemID = result.itemID {
+        if let match = result.noteMatch {
+            showNote(match)
+        } else if let itemID = result.itemID {
             // After closing, so a note's editor or the fence isn't closed along with the search.
             if reveal { showItem(itemID) } else { openItem(itemID) }
         } else if let url = result.url {

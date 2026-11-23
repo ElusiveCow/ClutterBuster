@@ -17,11 +17,14 @@ private final class SetupPanel: NSPanel {
 }
 
 /// Floats a newly created fence above app windows with a card for its settings (see
-/// `FenceSettingsForm`). Finishing settles the fence back to desktop level.
+/// `FenceSettingsForm`), starting with whether it holds files or is a sticky note.
+/// Finishing settles the fence back to desktop level.
 @MainActor
 final class FenceSetupController {
     let fenceID: UUID
     var onFinish: (() -> Void)?
+    /// After `onFinish`, when the card was closed with Done rather than a click elsewhere.
+    var onDone: (() -> Void)?
 
     private let width: CGFloat = 300
     private let gap: CGFloat = 8
@@ -40,7 +43,11 @@ final class FenceSetupController {
         panel = SetupPanel(width: width)
         let view = FenceSetupCard(
             fenceID: fenceID,
-            onDone: { [weak self] in self?.finish() },
+            onDone: { [weak self] in
+                guard let self, !self.finished else { return }
+                self.finish()
+                self.onDone?()
+            },
             onHeight: { [weak self] height in
                 self?.height = height
                 self?.reposition()
@@ -111,7 +118,7 @@ private struct FenceSetupCard: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 12) {
-            FenceSettingsForm(fenceID: fenceID, showsMore: showsMore, focusesName: true, onSubmit: onDone)
+            FenceSettingsForm(fenceID: fenceID, showsMore: showsMore, showsStyle: true, focusesName: true, onSubmit: onDone)
 
             HStack {
                 Button {

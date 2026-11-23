@@ -67,6 +67,8 @@ final class FenceCoordinator: ObservableObject {
     private static let migratedKey = "CBMigratedToHiddenFlag"
     /// Each item's tile, for popovers that point at it.
     let tileViews = NSMapTable<NSUUID, NSView>.strongToWeakObjects()
+    /// Each sticky note fence's text view, by fence ID, while it's showing.
+    let stickyTextViews = NSMapTable<NSUUID, StickyNoteTextView>.strongToWeakObjects()
     var notePopover: NSPopover?
     var noteCloseObserver: NSObjectProtocol?
     /// Waits for the displays to settle after they change.
@@ -83,7 +85,8 @@ final class FenceCoordinator: ObservableObject {
 
     func minimumSize(for fence: Fence) -> CGSize {
         let metrics = FenceMetrics(fence)
-        return CGSize(width: 180, height: metrics.titleHeight + metrics.tabStripHeight(fence) + metrics.minimumGridHeight)
+        let tabs = fence.isStickyNote ? 0 : metrics.tabStripHeight(fence)
+        return CGSize(width: 180, height: metrics.titleHeight + tabs + metrics.minimumGridHeight)
     }
 
     /// The most tab rows a fence this tall can show: the strip takes at most half the space
@@ -150,35 +153,43 @@ final class FenceCoordinator: ObservableObject {
 
     // MARK: Fences
 
+    /// Creates a fence of items, or a sticky note fence on yellow paper.
     @discardableResult
-    func createFence(title: String = "New Fence") -> UUID {
+    func createFence(title: String? = nil, style: FenceStyle = .items) -> UUID {
         setFencesHidden(false)
         let screen = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1200, height: 800)
-        let size = CGSize(width: 420, height: 300)
+        let size = style == .stickyNote ? CGSize(width: 280, height: 300) : CGSize(width: 420, height: 300)
         let offset = CGFloat(store.fences.count % 8) * 28
         let origin = CGPoint(x: screen.midX - size.width / 2 + offset, y: screen.midY - size.height / 2 - offset)
-        let fence = Fence(
-            title: title,
+        var fence = Fence(
+            title: title ?? Self.defaultTitle(for: style),
             frame: CGRect(origin: origin, size: size),
             color: AppSettings.defaultColor,
             iconsPerRow: AppSettings.defaultIconsPerRow,
             opacity: AppSettings.defaultOpacity
         )
+        fence.style = style
+        if style == .stickyNote { fence.paper = .yellow }
         store.add(fence)
         openWindow(for: fence)
         return fence.id
     }
 
     /// Creates a fence that floats above app windows with its setup card until the user is done.
+    /// Done on a sticky note's card goes on to its note, ready to type.
     @discardableResult
-    func createFenceWithSetup() -> UUID {
+    func createFenceWithSetup(style: FenceStyle = .items) -> UUID {
         setup?.finish()
         lowerRaisedFence()
-        let id = createFence()
+        let id = createFence(style: style)
         guard let window = controllers[id]?.window else { return id }
         let controller = FenceSetupController(fenceID: id, fenceWindow: window, coordinator: self)
         controller.onFinish = { [weak self, weak controller] in
             if self?.setup === controller { self?.setup = nil }
+        }
+        controller.onDone = { [weak self] in
+            guard let self, self.store.fence(id)?.isStickyNote == true else { return }
+            self.focusStickyNote(id)
         }
         setup = controller
         controller.begin()
@@ -192,7 +203,9 @@ final class FenceCoordinator: ObservableObject {
                 guard let self, let fence = self.store.fence(id) else { return }
                 let alert = NSAlert()
                 alert.messageText = "Delete \"\(fence.title)\"?"
-                alert.informativeText = "Its icons will go back to the desktop. Your files aren't affected."
+                alert.informativeText = fence.isStickyNote
+                    ? "Its note will be deleted too."
+                    : "Its icons will go back to the desktop. Your files aren't affected."
                 let delete = alert.addButton(withTitle: "Delete")
                 delete.hasDestructiveAction = true
                 alert.addButton(withTitle: "Cancel")
@@ -212,6 +225,7 @@ final class FenceCoordinator: ObservableObject {
         if settingsFenceID == id { closeSettings() }
         if noteEditor?.fenceID == id { closeNoteEditor() }
         unhide(fence.items)
+        stickyTextViews.removeObject(forKey: id as NSUUID)
         controllers.removeValue(forKey: id)?.close()
         tabFrames[id] = nil
         tabStripFrames[id] = nil
@@ -342,7 +356,7 @@ final class FenceCoordinator: ObservableObject {
 
     /// After the title or tabs grow: makes the fence at least its minimum size, keeping its
     /// top edge, and drops tab rows it no longer has room for.
-    private func fitToContent(_ id: UUID) {
+    func fitToContent(_ id: UUID) {
         guard let fence = store.fence(id) else { return }
         let minimum = minimumSize(for: fence)
         if fence.frame.height < minimum.height {
@@ -417,6 +431,8 @@ final class FenceCoordinator: ObservableObject {
         raisedOutsideClicks.stop()
         if settingsFenceID == id { closeSettings() }
         if noteEditor?.fenceID == id { closeNoteEditor() }
+        // A note stops being typed in, which saves it.
+        if store.fence(id)?.isStickyNote == true { controllers[id]?.window.makeFirstResponder(nil) }
         guard setup?.fenceID != id else { return }
         controllers[id]?.window.level = DesktopLevelWindow.desktopLevel
         Log.write("lowered fence \(id)")
@@ -517,6 +533,10 @@ final class FenceCoordinator: ObservableObject {
     /// taking them out of any other fence, and hides the Desktop ones from Finder.
     func addItems(_ urls: [URL], to id: UUID, tab: UUID? = nil) {
         guard let fence = store.fence(id) else { return }
+        guard fence.holdsItems else {
+            Log.write("\"\(fence.title)\" is a sticky note, so \(urls.count) item(s) weren't added to it")
+            return
+        }
         let tabID = tab.flatMap { tab in fence.tabs.contains { $0.id == tab } ? tab : nil } ?? fence.currentTab.id
         let positions = desktop.positionsNow() ?? [:]
         var added: [FenceItem] = []
@@ -665,6 +685,10 @@ final class FenceCoordinator: ObservableObject {
         }
 
         if let target = store.fences.first(where: { $0.id != sourceID && displayFrame(for: $0).contains(point) }) {
+            guard target.holdsItems else {
+                Log.write("  decision: dropped on sticky note \"\(target.title)\", no change")
+                return
+            }
             let tab = tab(at: point, in: target)
             Log.write("  decision: move to fence \"\(target.title)\"\(tab.map { ", tab \"\($0.name)\"" } ?? "")")
             if item.isFile {

@@ -11,6 +11,7 @@ extension FenceCoordinator {
 
     /// Adds what was dropped on a fence: files and apps by reference, web addresses as links.
     func addDropped(_ urls: [URL], to id: UUID, tab: UUID? = nil) {
+        guard store.fence(id)?.holdsItems == true else { return }
         let files = urls.filter(\.isFileURL)
         if !files.isEmpty { addItems(files, to: id, tab: tab) }
         for url in urls where !url.isFileURL {
@@ -77,7 +78,7 @@ extension FenceCoordinator {
     /// Moves a link, note or Shortcut to another fence. Files go through `addItems`, which
     /// also looks after their Desktop icons.
     func moveNonFileItem(_ item: FenceItem, from sourceID: UUID, to targetID: UUID, tab: UUID?) {
-        guard !item.isFile, let target = store.fence(targetID) else { return }
+        guard !item.isFile, let target = store.fence(targetID), target.holdsItems else { return }
         if noteEditor?.itemID == item.id { closeNoteEditor() }
         var moved = item
         moved.tabID = tabID(in: target, tab)
@@ -95,10 +96,11 @@ extension FenceCoordinator {
 
     // MARK: Pasting
 
-    /// Adds what's on the clipboard to a fence: copied files and apps, or web addresses.
-    /// Returns false when there's nothing to add.
+    /// Adds what's on the clipboard to a fence: copied files and apps, or web addresses; or
+    /// text to the end of a sticky note. Returns false when there's nothing to add.
     func paste(into id: UUID, from pasteboard: NSPasteboard = .general) -> Bool {
         guard let fence = store.fence(id) else { return false }
+        if fence.isStickyNote { return pasteIntoStickyNote(id, from: pasteboard) }
         let files = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
         if !files.isEmpty {
             Log.write("paste: \(files.count) file(s) into \"\(fence.title)\"")

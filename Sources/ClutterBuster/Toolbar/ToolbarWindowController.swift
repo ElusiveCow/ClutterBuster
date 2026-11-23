@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ToolbarActions {
     var newFence: () -> Void
+    var newStickyNote: () -> Void
     var collapseAll: () -> Void
     var expandAll: () -> Void
     var toggleFences: () -> Void
@@ -564,10 +565,15 @@ private struct ToolbarView: View {
         .onTapGesture { search.focus() }
     }
 
+    @ViewBuilder
     private func button(_ item: ToolbarItem, style: ThemeStyle, round: Bool = false) -> some View {
         switch item {
         case .newFence:
-            ToolbarButton(systemImage: "plus", help: "New fence", round: round, style: style, action: actions.newFence)
+            ToolbarButton(systemImage: "plus", help: "New fence. Right-click for a sticky note.", round: round, style: style, action: actions.newFence)
+                .contextMenu {
+                    Button("New Fence", action: actions.newFence)
+                    Button("New Sticky Note", action: actions.newStickyNote)
+                }
         case .collapseAll:
             ToolbarButton(systemImage: "rectangle.compress.vertical", help: "Collapse all fences", round: round, style: style, action: actions.collapseAll)
         case .expandAll:

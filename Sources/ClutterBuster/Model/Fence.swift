@@ -181,11 +181,22 @@ struct Fence: Codable, Identifiable {
     var cornerArt: CornerArtChoice?
     /// The Spaces the fence shows on. See `showsOnAllSpaces`.
     var spaces: FenceSpaces = .all
+    /// A grid of items, or one note filling the body.
+    var style: FenceStyle = .items
+    /// A sticky note fence's text. Checklist lines start with "- [ ] " or "- [x] "; see
+    /// `NoteLine`.
+    var note = ""
+    /// A sticky note fence's paper. Nil draws it in the fence's theme instead.
+    var paper: PaperColor?
+
+    var isStickyNote: Bool { style == .stickyNote }
+    /// Only item fences take files, links, notes and Shortcuts, or are offered for new files.
+    var holdsItems: Bool { style == .items }
 
     /// The Finder desktop is the same on every Space, so a fence holding Desktop files shows
     /// on all of them whatever `spaces` says; otherwise its files couldn't be reached from
     /// the other Spaces.
-    var holdsDesktopFiles: Bool { items.contains(where: \.isOnDesktop) }
+    var holdsDesktopFiles: Bool { holdsItems && items.contains(where: \.isOnDesktop) }
     var showsOnAllSpaces: Bool { spaces == .all || holdsDesktopFiles }
 
     static let textScaleRange = 0.8...1.8
@@ -242,7 +253,76 @@ extension Fence {
         titleStyle = (try? container.decodeIfPresent(TitleStyle.self, forKey: .titleStyle)) ?? TitleStyle()
         cornerArt = (try? container.decodeIfPresent(CornerArtChoice.self, forKey: .cornerArt)) ?? nil
         spaces = (try? container.decodeIfPresent(FenceSpaces.self, forKey: .spaces)) ?? .all
+        // A style from a newer version shows as items, so its fence can still be reached.
+        style = (try? container.decodeIfPresent(FenceStyle.self, forKey: .style)) ?? .items
+        note = try container.decodeIfPresent(String.self, forKey: .note) ?? ""
+        paper = (try? container.decodeIfPresent(PaperColor.self, forKey: .paper)) ?? nil
         normalizeTabs()
+    }
+}
+
+/// What a fence's body shows.
+enum FenceStyle: String, Codable, CaseIterable, Identifiable {
+    case items, stickyNote
+
+    var id: Self { self }
+
+    var name: String {
+        switch self {
+        case .items: "Files"
+        case .stickyNote: "Sticky Note"
+        }
+    }
+}
+
+/// The paper a sticky note fence is drawn on. "Use theme" is no paper: `Fence.paper` is nil.
+enum PaperColor: String, Codable, CaseIterable, Identifiable {
+    case yellow, pink, blue, green, lavender
+
+    var id: Self { self }
+    var name: String { rawValue.capitalized }
+}
+
+/// One line of a sticky note: plain text, or a checklist item saved as "- [ ] task" or
+/// "- [x] done".
+enum NoteLine: Equatable {
+    case text(String)
+    case item(checked: Bool, text: String)
+
+    static let uncheckedMarker = "- [ ] "
+    static let checkedMarker = "- [x] "
+    /// Both markers are this many UTF-16 units long.
+    static let markerLength = 6
+
+    init(_ line: Substring) {
+        if line.hasPrefix(Self.uncheckedMarker) {
+            self = .item(checked: false, text: String(line.dropFirst(Self.markerLength)))
+        } else if line.hasPrefix(Self.checkedMarker) || line.hasPrefix("- [X] ") {
+            self = .item(checked: true, text: String(line.dropFirst(Self.markerLength)))
+        } else {
+            self = .text(String(line))
+        }
+    }
+
+    var text: String {
+        switch self {
+        case .text(let text), .item(_, let text): text
+        }
+    }
+
+    var serialized: String {
+        switch self {
+        case .text(let text): text
+        case .item(let checked, let text): (checked ? Self.checkedMarker : Self.uncheckedMarker) + text
+        }
+    }
+
+    static func parse(_ note: String) -> [NoteLine] {
+        note.split(separator: "\n", omittingEmptySubsequences: false).map(NoteLine.init)
+    }
+
+    static func serialize(_ lines: [NoteLine]) -> String {
+        lines.map(\.serialized).joined(separator: "\n")
     }
 }
 

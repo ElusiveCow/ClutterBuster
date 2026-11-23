@@ -95,7 +95,7 @@ final class NewFilePromptController {
 
     /// Files every file the card is asking about into the fence's tab, or the tab it's showing.
     func choose(fenceID: UUID, tabID: UUID?) {
-        guard !model.files.isEmpty, let fence = store.fence(fenceID) else { return }
+        guard !model.files.isEmpty, let fence = store.fence(fenceID), fence.holdsItems else { return }
         let urls = model.files.map(\.url)
         let remember = model.remember ? RememberTarget.shared(by: model.files) : nil
         let tabID = tabID ?? fence.currentTab.id
@@ -277,13 +277,15 @@ private struct NewFilePromptView: View {
             Text(count == 1 ? "Put it in" : "Put them in")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(style.bodySecondary)
-            if store.fences.isEmpty {
+            // Sticky notes don't hold files.
+            let targets = store.fences.filter(\.holdsItems)
+            if targets.isEmpty {
                 Text("There aren't any fences yet.")
                     .font(.system(size: 12))
                     .foregroundStyle(style.bodySecondary)
             } else {
                 FlowLayout(spacing: 6, lineSpacing: 6) {
-                    ForEach(store.fences) { fence in
+                    ForEach(targets) { fence in
                         fenceChoice(fence, style: style)
                     }
                 }
