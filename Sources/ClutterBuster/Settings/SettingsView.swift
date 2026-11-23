@@ -10,6 +10,7 @@ struct SettingsView: View {
     @ObservedObject private var toolbar = ToolbarSettings.shared
     @ObservedObject private var snapping = SnapSettings.shared
     @ObservedObject private var newFiles = NewFileSettings.shared
+    @ObservedObject private var loginItem = LoginItem.shared
     let onQuit: () -> Void
 
     /// The form scrolls rather than growing past the screen.
@@ -90,6 +91,7 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            StartupSection(loginItem: loginItem, layoutCount: store.displayLayouts.count)
             Section("About") {
                 HStack(spacing: 12) {
                     Image(nsImage: NSApp.applicationIconImage)
@@ -104,7 +106,7 @@ struct SettingsView: View {
                 }
                 LabeledContent("Fences", value: "\(store.fences.count)")
                 LabeledContent("Items", value: "\(store.fences.reduce(0) { $0 + $1.items.count })")
-                Text("Files in fences stay in your Desktop folder. Clutter Buster hides their icons underneath the bottom-right corner of each fence, and quitting puts every icon back where it was.")
+                Text("Files in fences stay in your Desktop folder. Clutter Buster hides their Desktop icons while they're in a fence, and quitting puts every icon back where it was.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -114,6 +116,11 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 520, height: Self.height)
+        .onAppear { loginItem.refresh() }
+        // Approving in System Settings and coming back shows the new status.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            loginItem.refresh()
+        }
     }
 
     private var newFilesSection: some View {
@@ -183,6 +190,46 @@ struct SettingsView: View {
         rules.insert(rule, at: to)
         newFiles.rules = rules
         Log.write("new files: moved rule \(from + 1) (\(rule.summary)) to \(to + 1)")
+    }
+}
+
+/// Whether Clutter Buster opens at login, with a way to approve it, and the display layouts.
+struct StartupSection: View {
+    @ObservedObject var loginItem: LoginItem
+    let layoutCount: Int
+
+    private var isOn: Bool { loginItem.status == .enabled && loginItem.problem == nil }
+
+    var body: some View {
+        Section {
+            LabeledContent("Open at login") {
+                Label(loginItem.summary, systemImage: isOn ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(isOn ? .green : .orange)
+            }
+            if let problem = loginItem.problem {
+                Text(problem)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if loginItem.status != .enabled {
+                HStack {
+                    Text(loginItem.status == .requiresApproval
+                         ? "Turn on Clutter Buster under Open at Login."
+                         : "macOS hasn't added Clutter Buster to your login items yet.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Open Login Items\u{2026}") { loginItem.openLoginItemsSettings() }
+                }
+            }
+            LabeledContent("Display layouts saved", value: "\(layoutCount)")
+        } header: {
+            Text("Startup and Displays")
+        } footer: {
+            Text("Clutter Buster always opens when you log in, so your fences are there from the start. It's listed in System Settings \u{203A} General \u{203A} Login Items.\n\nFences remember where they sit for each set of displays. Plug in or unplug a display and they move back to where you left them with those displays; a set it hasn't seen starts from the current layout, fitted onto the screens. What's in each fence is the same everywhere.\n\nA fence shows on every Space unless you set Show On to This Space Only in its settings. That's only for fences without Desktop files, which are the same on every Space.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 

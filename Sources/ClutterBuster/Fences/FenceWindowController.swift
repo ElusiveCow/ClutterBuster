@@ -8,11 +8,22 @@ final class DesktopLevelWindow: NSWindow {
     init() {
         super.init(contentRect: CGRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.borderless], backing: .buffered, defer: false)
         level = Self.desktopLevel
-        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        collectionBehavior = Self.allSpaces
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
         isReleasedWhenClosed = false
+    }
+
+    private static let allSpaces: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+    /// `.managed` ties the window to one Space. A window at any level but the normal one is
+    /// otherwise transient, and floats along to whichever Space is active.
+    private static let oneSpace: NSWindow.CollectionBehavior = [.managed, .ignoresCycle]
+
+    /// On every Space, or only on the one it was last ordered onto.
+    var showsOnAllSpaces: Bool {
+        get { collectionBehavior.contains(.canJoinAllSpaces) }
+        set { collectionBehavior = newValue ? Self.allSpaces : Self.oneSpace }
     }
 
     override var canBecomeKey: Bool { true }

@@ -91,11 +91,6 @@ final class ToolbarWindowController {
         bubbleObserver = settings.$collapsesToBubble.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] on in
             MainActor.assumeIsolated { self?.bubbleSettingChanged(on) }
         }
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.keepOnScreen() }
-        }
         Log.write("toolbar: \(shape)\(model.collapsed ? ", collapsed to a bubble" : "") at \(barFrame.origin)")
     }
 
@@ -316,13 +311,23 @@ final class ToolbarWindowController {
         return ToolbarLayout.clamped(frame, to: visible)
     }
 
-    private func keepOnScreen() {
-        let frame = settled(barFrame, shape: model.shape)
-        guard frame != barFrame else { return }
+    /// Takes the shape and place the store has for the displays now connected, kept on
+    /// screen. Called once the displays have settled after a change.
+    func applyStoredPlacement() {
+        guard drag == nil else { return }
+        let shape = store.toolbarShape ?? model.shape
+        let size = ToolbarLayout.size(shape, buttons: Self.buttons)
+        let frame = settled(CGRect(origin: store.toolbarOrigin ?? barFrame.origin, size: size), shape: shape)
+        guard frame != barFrame || shape != model.shape else { return }
+        if model.columnSearchOpen, shape != .vertical { search.close() }
         barFrame = frame
+        model.shape = shape
+        bubbleAtStart = ToolbarLayout.bubbleAtStart(for: frame, shape: shape, in: Self.visibleFrame(at: CGPoint(x: frame.midX, y: frame.midY)))
         updateAnchor()
-        store.toolbarOrigin = frame.origin
+        if store.toolbarOrigin != frame.origin { store.toolbarOrigin = frame.origin }
+        if store.toolbarShape != shape { store.toolbarShape = shape }
         applyFrame(animated: false)
+        Log.write("toolbar: \(shape) at \(frame.origin) for these displays")
     }
 
     /// The visible frame of the screen under `point`, or the main screen's.

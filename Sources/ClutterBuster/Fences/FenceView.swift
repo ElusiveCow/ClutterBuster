@@ -607,6 +607,16 @@ struct FenceMenu: View {
         }
         .disabled(fence.isCollapsed)
         Button(fence.isCollapsed ? "Expand" : "Collapse") { coordinator.toggleCollapse(fence.id) }
+        Menu("Show On") {
+            ForEach(FenceSpaces.allCases) { spaces in
+                Button {
+                    coordinator.setSpaces(fence.id, spaces)
+                } label: {
+                    if (fence.showsOnAllSpaces ? .all : .current) == spaces { Label(spaces.name, systemImage: "checkmark") } else { Text(spaces.name) }
+                }
+                .disabled(spaces == .current && fence.holdsDesktopFiles)
+            }
+        }
         Divider()
         Button("Delete Fence…", role: .destructive) { coordinator.confirmDelete(fence.id) }
     }

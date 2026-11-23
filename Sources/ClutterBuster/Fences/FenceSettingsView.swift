@@ -103,6 +103,7 @@ struct FenceSettingsForm: View {
                     TitleStyleEditor(fenceID: fenceID)
                 }
                 tabsSection(fence)
+                spacesSection(fence)
             }
         }
         .onAppear {
@@ -145,6 +146,28 @@ struct FenceSettingsForm: View {
                     coordinator.setTabStrip(fenceID, rows: fence.tabRows, collapsed: !fence.tabsCollapsed)
                 }
                 .help("Shrink the tabs to a thin bar showing the current tab")
+            }
+        }
+    }
+
+    private func spacesSection(_ fence: Fence) -> some View {
+        let locked = fence.holdsDesktopFiles
+        return SettingsSection("Show on") {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 5) {
+                    ForEach(FenceSpaces.allCases) { spaces in
+                        Chip(title: spaces.name, selected: (locked ? .all : fence.spaces) == spaces) {
+                            coordinator.setSpaces(fenceID, spaces)
+                        }
+                        .disabled(locked && spaces == .current)
+                    }
+                }
+                Text(locked
+                     ? "It holds Desktop files, which are on every Space, so it shows on all of them."
+                     : fence.spaces == .current ? "Shows on the Space it's on now. After a restart it opens on the Space you're on." : "Shows on every Space.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

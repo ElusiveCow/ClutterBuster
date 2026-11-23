@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.write("launched with \(store.fences.count) fences")
+        LoginItem.shared.registerAtLaunch()
         desktop.onAccessDenied = { [weak self] in self?.showAccessAlert() }
         coordinator.start()
         quitOnSIGTERM()
@@ -45,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let toolbar, toolbar.isVisible else { return nil }
             return toolbar.window.frame
         }
+        coordinator.onDisplayLayoutChanged = { [weak toolbar] in toolbar?.applyStoredPlacement() }
         buildStatusItem()
 
         // Ask for Finder access up front rather than on the first drop.

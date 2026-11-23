@@ -179,6 +179,14 @@ struct Fence: Codable, Identifiable {
     var titleStyle = TitleStyle()
     /// The picture in the body's corner. Nil shows the theme's.
     var cornerArt: CornerArtChoice?
+    /// The Spaces the fence shows on. See `showsOnAllSpaces`.
+    var spaces: FenceSpaces = .all
+
+    /// The Finder desktop is the same on every Space, so a fence holding Desktop files shows
+    /// on all of them whatever `spaces` says; otherwise its files couldn't be reached from
+    /// the other Spaces.
+    var holdsDesktopFiles: Bool { items.contains(where: \.isOnDesktop) }
+    var showsOnAllSpaces: Bool { spaces == .all || holdsDesktopFiles }
 
     static let textScaleRange = 0.8...1.8
     static let textScaleStep = 0.1
@@ -233,7 +241,22 @@ extension Fence {
         textScale = Self.clampedTextScale(try container.decodeIfPresent(Double.self, forKey: .textScale) ?? 1)
         titleStyle = (try? container.decodeIfPresent(TitleStyle.self, forKey: .titleStyle)) ?? TitleStyle()
         cornerArt = (try? container.decodeIfPresent(CornerArtChoice.self, forKey: .cornerArt)) ?? nil
+        spaces = (try? container.decodeIfPresent(FenceSpaces.self, forKey: .spaces)) ?? .all
         normalizeTabs()
+    }
+}
+
+/// "Show on" in a fence's settings.
+enum FenceSpaces: String, Codable, CaseIterable, Identifiable {
+    case all, current
+
+    var id: Self { self }
+
+    var name: String {
+        switch self {
+        case .all: "All Spaces"
+        case .current: "This Space Only"
+        }
     }
 }
 

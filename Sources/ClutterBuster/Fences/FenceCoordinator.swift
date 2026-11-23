@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -16,6 +17,9 @@ final class FenceCoordinator: ObservableObject {
     let store: FenceStore
     let desktop: DesktopIconService
     var toolbarFrame: () -> CGRect? = { nil }
+    /// Called after another display layout loads, or the screens change, so the toolbar can
+    /// move to where the store now says.
+    var onDisplayLayoutChanged: () -> Void = {}
 
     private var controllers: [UUID: FenceWindowController] = [:]
     private var liveFrames: [UUID: CGRect] = [:]
@@ -65,6 +69,9 @@ final class FenceCoordinator: ObservableObject {
     let tileViews = NSMapTable<NSUUID, NSView>.strongToWeakObjects()
     var notePopover: NSPopover?
     var noteCloseObserver: NSObjectProtocol?
+    /// Waits for the displays to settle after they change.
+    private var displayWork: DispatchWorkItem?
+    private var spacesObserver: AnyCancellable?
 
     init(store: FenceStore, desktop: DesktopIconService) {
         self.store = store
@@ -111,8 +118,12 @@ final class FenceCoordinator: ObservableObject {
                 fence.frame.origin.y = top - fence.frame.height
             }
         }
+        applyDisplays(reason: "launch", checkHiddenFiles: false)
         reconcileHiddenFiles()
         for fence in store.fences { openWindow(for: fence) }
+        spacesObserver = store.$fences.receive(on: DispatchQueue.main).sink { [weak self] fences in
+            MainActor.assumeIsolated { self?.applySpaces(fences) }
+        }
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -1117,6 +1128,9 @@ final class FenceCoordinator: ObservableObject {
     private func openWindow(for fence: Fence) {
         let controller = FenceWindowController(fenceID: fence.id, coordinator: self)
         controllers[fence.id] = controller
+        // Without a public way to tell Spaces apart, a This Space Only fence opens on the
+        // Space that's active when it's first shown.
+        controller.window.showsOnAllSpaces = fence.showsOnAllSpaces
         controller.window.setFrame(displayFrame(for: fence), display: true)
         if !fencesHidden { controller.window.orderFrontRegardless() }
     }
@@ -1170,10 +1184,107 @@ final class FenceCoordinator: ObservableObject {
         RunLoop.main.add(timer, forMode: .common)
     }
 
-    private func screensChanged() {
+    // MARK: Displays
+
+    /// macOS reports several changes while a display is plugged in or the lid closes, so the
+    /// layout switches once they've settled. Until then nothing moves, and the layout in use
+    /// is saved as it was.
+    func screensChanged() {
+        displayWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.applyDisplays(reason: "the displays changed") }
+        }
+        displayWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+    }
+
+    /// Loads the layout for the connected displays, saving the one in use first, then fits
+    /// every fence and the toolbar onto the screens and makes sure no hidden file is left
+    /// without a fence to reach it by.
+    private func applyDisplays(reason: String, checkHiddenFiles: Bool = true) {
+        displayWork = nil
+        guard interacting.isEmpty else {
+            screensChanged()
+            return
+        }
+        let screens = DisplaySet.current()
+        guard !screens.isEmpty else {
+            Log.write("displays: none connected (\(reason)), waiting for one")
+            return
+        }
+        let key = DisplaySet.key(for: screens.map(\.id))
+        let change = store.useDisplayLayout(key, screens: screens)
+        if change.switched {
+            let what = change.from == nil ? "first layout for these displays, from the saved fences"
+                : change.isNew ? "new layout, starting from the last one" : "saved layout"
+            Log.write("displays: \(DisplaySet.describe(screens)) (\(reason)); \(what), key \(key)")
+        }
+        var moved: [String] = []
         for fence in store.fences {
-            clampToScreens(fence.id)
-            applyFrame(fence.id)
+            let savedOn = change.unsaved.contains(fence.id) ? change.previousScreens : change.savedScreens
+            let placed = ScreenPlacement.place(
+                fence.frame, titleHeight: FenceMetrics(fence).titleHeight, minimumSize: minimumSize(for: fence),
+                savedOn: savedOn, onto: screens
+            )
+            guard placed != fence.frame else { continue }
+            moved.append("\"\(fence.title)\" \(fence.frame.integral) to \(placed.integral)")
+            store.update(fence.id) { $0.frame = placed }
+        }
+        if !moved.isEmpty { Log.write("displays: fitted onto the screens: \(moved.joined(separator: ", "))") }
+        store.layoutFits(screens)
+        for fence in store.fences { applyFrame(fence.id) }
+        onDisplayLayoutChanged()
+        if checkHiddenFiles { ensureHiddenFilesReachable(on: screens) }
+    }
+
+    /// A safety net: fences are fitted onto the screens and hold the same files in every
+    /// layout, so this finds nothing unless something went wrong. Anything it finds goes back
+    /// on the Desktop, the one place a file is sure to be seen.
+    private func ensureHiddenFilesReachable(on screens: [ScreenInfo]) {
+        let hidden = desktop.hiddenFiles.paths
+        let unreachable = HiddenFileReachability.unreachable(hidden: hidden, fences: store.fences, visibleFrames: screens.map(\.visibleFrame))
+        guard !unreachable.isEmpty else {
+            Log.write("displays: all \(hidden.count) hidden Desktop file(s) are in a fence on screen")
+            return
+        }
+        Log.write("displays: \(unreachable.count) hidden file(s) had no fence on screen to show them, so they're back on the Desktop: \(unreachable.map { ($0 as NSString).lastPathComponent }.sorted().joined(separator: ", "))")
+        let fenced = store.fences.flatMap(\.items).filter { unreachable.contains($0.path) }
+        unhide(fenced)
+        desktop.hiddenFiles.unhide(unreachable.subtracting(fenced.map(\.path)).map { URL(fileURLWithPath: $0) })
+    }
+
+    // MARK: Spaces
+
+    /// "This Space Only" can't be picked for a fence holding Desktop files.
+    func setSpaces(_ id: UUID, _ spaces: FenceSpaces) {
+        guard let fence = store.fence(id), fence.spaces != spaces else { return }
+        if spaces == .current, fence.holdsDesktopFiles {
+            Log.write("spaces: \"\(fence.title)\" holds Desktop files, so it stays on all Spaces")
+            NSSound.beep()
+            return
+        }
+        store.update(id) { $0.spaces = spaces }
+        Log.write("spaces: \"\(fence.title)\" set to \(spaces.name)")
+    }
+
+    /// Puts each fence's window on all Spaces or just one. A fence set to This Space Only
+    /// that gains a Desktop file goes back to All Spaces.
+    private func applySpaces(_ fences: [Fence]) {
+        for fence in fences {
+            if fence.spaces == .current, fence.holdsDesktopFiles {
+                Log.write("spaces: \"\(fence.title)\" now holds Desktop files, so it's back on all Spaces")
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated { self?.store.update(fence.id) { $0.spaces = .all } }
+                }
+            }
+            guard let window = controllers[fence.id]?.window, window.showsOnAllSpaces != fence.showsOnAllSpaces else { continue }
+            window.showsOnAllSpaces = fence.showsOnAllSpaces
+            // A window that leaves all Spaces stays on the one it's ordered onto.
+            if !fence.showsOnAllSpaces, window.isVisible {
+                window.orderOut(nil)
+                window.orderFrontRegardless()
+            }
+            Log.write("spaces: \"\(fence.title)\" window now on \(fence.showsOnAllSpaces ? "all Spaces" : "this Space only"), on the active Space: \(window.isOnActiveSpace)")
         }
     }
 
@@ -1257,15 +1368,17 @@ final class FenceCoordinator: ObservableObject {
         return nil
     }
 
-    /// Keeps at least part of each fence's title bar on a screen.
+    /// Keeps enough of a fence's title bar on a screen to grab it, moving it onto the
+    /// nearest screen otherwise.
     private func clampToScreens(_ id: UUID) {
         guard let fence = store.fence(id) else { return }
-        let titleHeight = FenceMetrics(fence).titleHeight
-        let title = CGRect(x: fence.frame.minX, y: fence.frame.maxY - titleHeight, width: fence.frame.width, height: titleHeight)
-        let visible = NSScreen.screens.contains { $0.visibleFrame.intersection(title).width >= 60 }
-        guard !visible, let screen = NSScreen.main?.visibleFrame else { return }
-        store.update(id) { fence in
-            fence.frame.origin = CGPoint(x: screen.midX - fence.frame.width / 2, y: screen.midY - fence.frame.height / 2)
-        }
+        let screens = DisplaySet.current()
+        let placed = ScreenPlacement.place(
+            fence.frame, titleHeight: FenceMetrics(fence).titleHeight, minimumSize: minimumSize(for: fence),
+            savedOn: screens, onto: screens
+        )
+        guard placed != fence.frame else { return }
+        Log.write("\"\(fence.title)\" was let go off screen; moved to \(placed.integral)")
+        store.update(id) { $0.frame = placed }
     }
 }
