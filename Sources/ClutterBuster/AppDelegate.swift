@@ -13,6 +13,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var settingsWindow: NSWindow?
     private var shownAccessAlert = false
     private var sigterm: DispatchSourceSignal?
+    private let watcher = DesktopWatcher()
+    private var autoFiler: AutoFiler?
+    private lazy var newFilePrompt = NewFilePromptController(store: store)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.write("launched with \(store.fences.count) fences")
@@ -41,6 +44,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Ask for Finder access up front rather than on the first drop.
         _ = desktop.positionsNow()
 
+        newFilePrompt.placement = { [weak toolbar] in toolbar?.placement }
+        let autoFiler = AutoFiler(coordinator: coordinator, prompt: newFilePrompt)
+        self.autoFiler = autoFiler
+        watcher.isFenced = { [weak self] path in
+            self?.store.fences.contains { $0.items.contains { $0.path == path } } ?? false
+        }
+        watcher.onNewFiles = { [weak autoFiler] urls in autoFiler?.handle(urls) }
+        watcher.start()
+
         if let demoPath = UserDefaults.standard.string(forKey: "CBDemoPath") {
             let id = coordinator.createFence(title: "Demo")
             coordinator.addItems([URL(fileURLWithPath: demoPath)], to: id)
@@ -63,6 +75,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        watcher.stop()
+        newFilePrompt.leave(reason: "Clutter Buster quit")
         coordinator.restoreAllToDesktop()
         store.saveNow()
         return .terminateNow

@@ -496,11 +496,11 @@ final class FenceCoordinator: ObservableObject {
 
     // MARK: Items
 
-    /// Adds items to a tab of a fence (its selected tab by default), taking them out of any
-    /// other fence, and hides the Desktop ones from Finder.
+    /// Adds items to a tab of a fence (its selected tab by default, or when `tab` is gone),
+    /// taking them out of any other fence, and hides the Desktop ones from Finder.
     func addItems(_ urls: [URL], to id: UUID, tab: UUID? = nil) {
         guard let fence = store.fence(id) else { return }
-        let tabID = tab ?? fence.currentTab.id
+        let tabID = tab.flatMap { tab in fence.tabs.contains { $0.id == tab } ? tab : nil } ?? fence.currentTab.id
         let positions = desktop.positionsNow() ?? [:]
         var added: [FenceItem] = []
         for url in urls {
@@ -742,10 +742,12 @@ final class FenceCoordinator: ObservableObject {
 
     private func folderDropFinished(_ jobs: [FolderDropJob], _ results: [Result<URL, Error>], folder: URL, copy: Bool, failures: [String]) {
         var failures = failures
+        var placed: [String] = []
         for (job, result) in zip(jobs, results) {
             switch result {
             case .success(let destination):
                 Log.write("  \(copy ? "copied" : "moved") \"\(job.source.path)\" to \"\(destination.path)\"")
+                placed.append(destination.standardizedFileURL.path)
                 if !copy { forgetMovedPath(job.source.path, now: destination.path) }
             case .failure(let error):
                 Log.write("  couldn't \(copy ? "copy" : "move") \"\(job.source.lastPathComponent)\": \(error.localizedDescription)")
@@ -753,6 +755,9 @@ final class FenceCoordinator: ObservableObject {
                 // It's still where it was and still fenced.
                 if !copy { hide(job.fenced) }
             }
+        }
+        if !placed.isEmpty {
+            NotificationCenter.default.post(name: .clutterBusterDidPlaceFiles, object: self, userInfo: [HiddenFiles.pathsKey: placed])
         }
         showFolderDropFailures(failures, folder: folder, copy: copy)
     }

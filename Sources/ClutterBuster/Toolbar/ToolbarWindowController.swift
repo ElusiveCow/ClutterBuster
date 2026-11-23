@@ -101,6 +101,12 @@ final class ToolbarWindowController {
 
     var isVisible: Bool { window.isVisible }
 
+    /// Where the toolbar shows now, or nil while it's hidden.
+    var placement: ToolbarPlacement? {
+        guard isVisible else { return nil }
+        return ToolbarPlacement(frame: window.frame, shape: model.shape, collapsed: model.collapsed)
+    }
+
     func show() { window.orderFrontRegardless() }
 
     func hide() {
