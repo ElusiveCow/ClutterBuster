@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct FenceView: View {
     let fenceID: UUID
@@ -111,11 +112,7 @@ struct FenceView: View {
             }
             // Files and apps from Finder, and links from a browser. A sticky note takes only
             // text, which its note handles itself.
-            .dropDestination(for: URL.self) { urls, _ in
-                guard store.fence(fenceID)?.holdsItems == true else { return false }
-                coordinator.addDropped(urls, to: fenceID)
-                return true
-            } isTargeted: { isDropTargeted = $0 && store.fence(fenceID)?.holdsItems == true }
+            .onDrop(of: [.url], delegate: FenceDropDelegate(fenceID: fenceID, store: store, coordinator: coordinator, isTargeted: $isDropTargeted))
         }
     }
 
@@ -597,6 +594,44 @@ struct FenceView: View {
         guard isRenaming else { return }
         isRenaming = false
         coordinator.rename(fenceID, to: draftTitle)
+    }
+}
+
+/// Adds files and links dropped from Finder and other apps. An item dragged from a tile
+/// carries its file URL too, for other apps, but `itemDragEnded` moves it, so it's refused.
+private struct FenceDropDelegate: DropDelegate {
+    let fenceID: UUID
+    let store: FenceStore
+    let coordinator: FenceCoordinator
+    @Binding var isTargeted: Bool
+
+    func validateDrop(info: DropInfo) -> Bool {
+        coordinator.draggedItemID == nil && store.fence(fenceID)?.holdsItems == true && info.hasItemsConforming(to: [.url])
+    }
+
+    func dropEntered(info: DropInfo) {
+        isTargeted = validateDrop(info: info)
+    }
+
+    func dropExited(info: DropInfo) {
+        isTargeted = false
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        isTargeted = false
+        guard validateDrop(info: info) else { return false }
+        let providers = info.itemProviders(for: [.url])
+        Task { @MainActor [coordinator, fenceID] in
+            var urls: [URL] = []
+            for provider in providers {
+                let url: URL? = await withCheckedContinuation { done in
+                    _ = provider.loadObject(ofClass: URL.self) { url, _ in done.resume(returning: url) }
+                }
+                if let url { urls.append(url) }
+            }
+            coordinator.addDropped(urls, to: fenceID)
+        }
+        return true
     }
 }
 

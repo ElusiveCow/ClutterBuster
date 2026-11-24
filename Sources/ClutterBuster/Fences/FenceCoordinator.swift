@@ -31,6 +31,9 @@ final class FenceCoordinator: ObservableObject {
     @Published var folderDropTargetID: UUID?
     /// Fence items just dropped on a folder tile, which `itemDragEnded` leaves alone.
     private var droppedIntoFolder: Set<UUID> = []
+    /// The item being dragged from a tile. Fences ignore its file URL, since `itemDragEnded`
+    /// moves it.
+    var draggedItemID: UUID?
     private var setup: FenceSetupController?
     private var settingsPopover: NSPopover?
     private var settingsCloseObserver: NSObjectProtocol?
@@ -838,7 +841,8 @@ final class FenceCoordinator: ObservableObject {
 
     /// Called when an item tile is dropped at `point` (Cocoa screen coordinates). Over another
     /// fence it moves there; over open desktop it leaves the fence and its icon lands under
-    /// the mouse. Anywhere else (its own fence, the toolbar, an app window) nothing changes.
+    /// the mouse. Anywhere else (its own fence, the toolbar, an app window, or an app that
+    /// copied it) nothing changes.
     func itemDragEnded(_ itemID: UUID, from sourceID: UUID, at point: CGPoint, operation: NSDragOperation) {
         if droppedIntoFolder.remove(itemID) != nil {
             Log.write("drag end: item \(itemID) was dropped on a folder tile")
@@ -891,6 +895,15 @@ final class FenceCoordinator: ObservableObject {
         if toolbarFrame()?.contains(point) == true {
             Log.write("  decision: dropped on toolbar, no change")
             return
+        }
+        // Another app copied the file, link or text; the item stays as it is.
+        if operation.contains(.copy) {
+            let target = DragTargets.at(point)
+            if let app = DragTargets.appReceivingDrop(operation: operation, target: target) {
+                Log.write("  decision: dropped into another app (\(app)), no change")
+                return
+            }
+            Log.write("  note: a copy was reported over \(target.name), so it's handled like any drop there")
         }
         if let blocker = desktopBlocker(at: point) {
             Log.write("  decision: covered by \(blocker), no change")

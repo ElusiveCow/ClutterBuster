@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 
 extension NSPasteboard.PasteboardType {
-    /// Only Clutter Buster understands this type, so Finder never moves, copies or aliases
-    /// the file when an item is dragged out of a fence.
+    /// The dragged item's ID, which fences, tabs and folder tiles read before anything else.
+    /// Other apps get the file, link or text from `ItemDragPayload`.
     static let clutterBusterItem = NSPasteboard.PasteboardType("com.elusivecow.clutterbuster.item")
 }
 
@@ -53,6 +53,7 @@ final class ItemDragView: NSView, NSDraggingSource {
 
     private var mouseDownEvent: NSEvent?
     private var isDragging = false
+    private var payload: ItemDragPayload?
     private var springTimer: Timer?
     /// How long a drag rests on a folder tile before the folder opens in Finder.
     private static let springDelay: TimeInterval = 1
@@ -71,9 +72,10 @@ final class ItemDragView: NSView, NSDraggingSource {
         isDragging = true
         Log.write("drag start: \"\(item.finderName)\"")
 
-        let pasteboardItem = NSPasteboardItem()
-        pasteboardItem.setString(item.id.uuidString, forType: .clutterBusterItem)
-        let draggingItem = NSDraggingItem(pasteboardWriter: pasteboardItem)
+        let payload = ItemDragPayload(item: item)
+        self.payload = payload
+        coordinator?.draggedItemID = item.id
+        let draggingItem = NSDraggingItem(pasteboardWriter: payload.makePasteboardItem())
         let point = convert(down.locationInWindow, from: nil)
         let frame = NSRect(x: point.x - iconSize / 2, y: point.y - iconSize / 2, width: iconSize, height: iconSize)
         let scale = window?.backingScaleFactor ?? 2
@@ -93,14 +95,22 @@ final class ItemDragView: NSView, NSDraggingSource {
         }
     }
 
-    // Move and copy are for folder tiles, which are the only views that accept this drag.
+    // Move and copy are for folder tiles, the only views in the app that accept this drag.
+    // Outside the app, another app may copy, and Finder may do nothing.
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-        context == .withinApplication ? [.generic, .move, .copy] : []
+        payload?.operationMask(for: context) ?? (context == .withinApplication ? [.generic, .move, .copy] : [])
+    }
+
+    func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
+        payload?.pointerMoved(on: session.draggingPasteboard)
     }
 
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
         isDragging = false
         mouseDownEvent = nil
+        // The payload stays until the next drag, for an app that reads the drop late.
+        payload?.dragEnded()
+        coordinator?.draggedItemID = nil
         guard let item, let fenceID else { return }
         let mouse = NSEvent.mouseLocation
         coordinator?.itemDragEnded(item.id, from: fenceID, at: mouse, operation: operation)

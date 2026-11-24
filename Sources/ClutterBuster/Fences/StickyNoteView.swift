@@ -402,6 +402,17 @@ final class StickyNoteTextView: NSTextView, NSTextViewDelegate {
     override var acceptableDragTypes: [NSPasteboard.PasteboardType] { [.string] }
     override var readablePasteboardTypes: [NSPasteboard.PasteboardType] { [.string] }
 
+    // A link or note dragged from a tile carries its text too, for other apps.
+    override func dragOperation(for dragInfo: NSDraggingInfo, type: NSPasteboard.PasteboardType) -> NSDragOperation {
+        if dragInfo.draggingPasteboard.types?.contains(.clutterBusterItem) == true { return [] }
+        return super.dragOperation(for: dragInfo, type: type)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if sender.draggingPasteboard.types?.contains(.clutterBusterItem) == true { return false }
+        return super.performDragOperation(sender)
+    }
+
     override func mouseDown(with event: NSEvent) {
         // Clutter Buster sits in the background; typing needs it active and this window key.
         if let window, !window.isKeyWindow {
