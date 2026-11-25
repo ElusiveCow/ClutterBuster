@@ -35,13 +35,6 @@ enum DragTargets {
     /// Drag images, the cursor and screen savers sit at this level and above.
     static let draggingLayer = Int(CGWindowLevelForKey(.draggingWindow))
 
-    /// The mask outside the app: copy for another app, nothing for Finder, so Finder never
-    /// takes the file.
-    static func outsideMask(for target: DragTarget) -> NSDragOperation {
-        if case .app = target { return .copy }
-        return []
-    }
-
     /// The app that took a drop which ended with `operation`, or nil if it wasn't another app.
     static func appReceivingDrop(operation: NSDragOperation, target: DragTarget) -> String? {
         guard operation.contains(.copy), case .app(let name) = target else { return nil }
@@ -187,8 +180,11 @@ final class ItemDragPayload: NSObject, NSPasteboardItemDataProvider {
         return pasteboardItem
     }
 
-    /// The drag mask: everything inside the app, as before; outside, copy for another app and
-    /// nothing over Finder. Repeats of the same answer are counted rather than each logged.
+    /// The drag mask: everything inside the app, as before; outside, copy for anything there
+    /// is to give. AppKit asks for the outside mask once, at the start of the drag while the
+    /// pointer is still over the fence, so it can't depend on where the pointer goes. Finder
+    /// is kept out by `provide`, which gives it nothing to copy. Repeats of the same answer
+    /// are counted rather than each logged.
     func operationMask(for context: NSDraggingContext) -> NSDragOperation {
         let line: String
         let mask: NSDragOperation
@@ -196,9 +192,8 @@ final class ItemDragPayload: NSObject, NSPasteboardItemDataProvider {
             mask = [.generic, .move, .copy]
             line = "drag: mask asked inside Clutter Buster, allowed move and copy"
         } else {
-            let target = target()
-            mask = DragTargets.outsideMask(for: target)
-            line = "drag: mask asked outside the app, over \(target.name), \(mask.isEmpty ? "refused" : "allowed copy")"
+            mask = Self.publicTypes(for: item).isEmpty ? [] : .copy
+            line = "drag: mask asked outside the app, \(mask.isEmpty ? "refused (nothing to give)" : "allowed copy")"
         }
         if line == lastMaskLine {
             maskRepeats += 1
@@ -219,13 +214,27 @@ final class ItemDragPayload: NSObject, NSPasteboardItemDataProvider {
         if !refused, case .app = target { return }
         pasteboard.clearContents()
         pasteboard.writeObjects([makePasteboardItem()])
-        Log.write("drag: pointer over \(target.name), \"\(item.finderName)\" is back to being given out on request (after \(refused ? "a refusal" : "another app had it"))")
+        // Finder and the fences ask again on every move, so a refusal over the same place is
+        // rewritten many times a second; only the first is logged.
+        if !refused || target.name != lastRefusalPlace {
+            Log.write("drag: pointer over \(target.name), \"\(item.finderName)\" is back to being given out on request (after \(refused ? "a refusal" : "another app had it"))")
+        }
         provided = false
         refused = false
     }
 
     func dragEnded() {
         flushMaskLog()
+        flushRefusalLog()
+    }
+
+    private var lastRefusalPlace: String?
+    private var quietRefusals = 0
+
+    private func flushRefusalLog() {
+        if quietRefusals > 0 { Log.write("  (refused \(quietRefusals) more time\(quietRefusals == 1 ? "" : "s") over \(lastRefusalPlace ?? "the same place"))") }
+        quietRefusals = 0
+        lastRefusalPlace = nil
     }
 
     private func flushMaskLog() {
@@ -246,9 +255,16 @@ final class ItemDragPayload: NSObject, NSPasteboardItemDataProvider {
         let target = target()
         guard case .app = target else {
             refused = true
-            Log.write("drag: \(type.rawValue) asked for over \(target.name), gave nothing")
+            if target.name == lastRefusalPlace {
+                quietRefusals += 1
+            } else {
+                flushRefusalLog()
+                Log.write("drag: \(type.rawValue) asked for over \(target.name), gave nothing")
+                lastRefusalPlace = target.name
+            }
             return
         }
+        flushRefusalLog()
         let value: String? = switch (item.kind, type) {
         case (.file, .fileURL): item.url.absoluteString
         case (.link, .URL), (.link, .string): item.link

@@ -141,14 +141,14 @@ final class ItemDragPayloadTests: XCTestCase {
     func testOperationMask() {
         let payload = payload(FenceItem(path: "/tmp/x"))
         XCTAssertEqual(payload.operationMask(for: .withinApplication), [.generic, .move, .copy])
-        target = .app("Slack")
-        XCTAssertEqual(payload.operationMask(for: .outsideApplication), .copy)
-        target = .finder("the desktop")
-        XCTAssertEqual(payload.operationMask(for: .outsideApplication), [])
-        target = .finder("a Finder window")
-        XCTAssertEqual(payload.operationMask(for: .outsideApplication), [])
-        target = .clutterBuster
-        XCTAssertEqual(payload.operationMask(for: .outsideApplication), [])
+        // AppKit asks once, while the pointer is still over the fence, so the answer can't
+        // depend on where it is; Finder is refused the data instead.
+        for place in [DragTarget.clutterBuster, .finder("the desktop"), .finder("a Finder window"), .app("Slack")] {
+            target = place
+            XCTAssertEqual(payload.operationMask(for: .outsideApplication), .copy, "\(place)")
+        }
+        let shortcut = self.payload(.shortcut("Take a Break", tabID: nil))
+        XCTAssertEqual(shortcut.operationMask(for: .outsideApplication), [], "a Shortcut has nothing to give")
     }
 
     // MARK: Ending the drag
